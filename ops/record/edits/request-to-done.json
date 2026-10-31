@@ -1,0 +1,88 @@
+{
+ "name": "request-to-done",
+ "fps": 10,
+ "colors": 64,
+ "hold": 1.2,
+ "segments": [
+  {
+   "from": "start+0.3",
+   "to": "login",
+   "speed": 1
+  },
+  {
+   "from": "board-0.2",
+   "to": "form",
+   "speed": 1
+  },
+  {
+   "from": "form",
+   "to": "send",
+   "speed": 2.2
+  },
+  {
+   "from": "send",
+   "to": "sent+1.4",
+   "speed": 1
+  },
+  {
+   "from": "sent+1.4",
+   "to": "planned",
+   "fit": 6
+  },
+  {
+   "from": "planned",
+   "to": "idle-from",
+   "speed": 1
+  },
+  {
+   "from": "idle-to",
+   "to": "idle-to+0.95",
+   "speed": 3
+  },
+  {
+   "from": "idle-to+0.95",
+   "to": "plan-card",
+   "speed": 1.2
+  },
+  {
+   "from": "plan-card",
+   "to": "plan-card+1.15",
+   "speed": 3
+  },
+  {
+   "from": "plan-card+1.15",
+   "to": "plan-card+4.9",
+   "speed": 1.2
+  },
+  {
+   "from": "plan-card+4.9",
+   "to": "approve",
+   "speed": 2.5
+  },
+  {
+   "from": "approve",
+   "to": "approved+1",
+   "speed": 1
+  },
+  {
+   "from": "approved+1",
+   "to": "s-reviewing",
+   "fit": 9.5
+  },
+  {
+   "from": "s-reviewing",
+   "to": "done",
+   "fit": 4.5
+  },
+  {
+   "from": "done",
+   "to": "learned",
+   "fit": 3.5
+  },
+  {
+   "from": "learned",
+   "to": "end",
+   "speed": 1.15
+  }
+ ]
+}

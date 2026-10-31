@@ -1,0 +1,16 @@
+{ "name": "review-diff", "fps": 10, "colors": 64, "hold": 0.8,
+  "segments": [
+    { "from": "start+0.4", "to": "sc1", "speed": 1 },
+    { "from": "sc1", "to": "sc1-end", "speed": 3 },
+    { "from": "sc1-end", "to": "sc2", "speed": 1 },
+    { "from": "sc2", "to": "sc2-end", "speed": 3 },
+    { "from": "sc2-end", "to": "sc3", "speed": 1 },
+    { "from": "sc3", "to": "sc3-end", "speed": 3 },
+    { "from": "sc3-end", "to": "sc4", "speed": 1 },
+    { "from": "sc4", "to": "sc4-end", "speed": 3 },
+    { "from": "sc4-end", "to": "sc5", "speed": 1 },
+    { "from": "sc5", "to": "sc5-end", "speed": 3 },
+    { "from": "sc5-end", "to": "sc6", "speed": 1 },
+    { "from": "sc6", "to": "sc6-end", "speed": 3 },
+    { "from": "sc6-end", "to": "end", "speed": 1 }
+  ] }

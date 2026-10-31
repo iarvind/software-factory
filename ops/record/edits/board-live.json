@@ -1,0 +1,2 @@
+{ "name": "board-live", "fps": 12, "colors": 96, "hold": 1.0,
+  "segments": [ { "from": "start+0.3", "to": "end", "speed": 1 } ] }
