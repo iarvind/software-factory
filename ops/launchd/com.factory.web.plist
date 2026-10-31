@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: ops/launchd.sh renders __ROOT__, __NODE__, __PATH__, __HOME__ and installs it.
+     The software factory (API + pipeline + built web) on :8282. KeepAlive: relaunched on crash and at login. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.factory.web</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__NODE__</string>
+		<string>--disable-warning=ExperimentalWarning</string>
+		<string>--env-file-if-exists=__ROOT__/.env</string>
+		<string>__ROOT__/server/index.ts</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>__ROOT__</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>__PATH__</string>
+		<key>HOME</key>
+		<string>__HOME__</string>
+		<key>NODE_ENV</key>
+		<string>production</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
+	<key>StandardOutPath</key>
+	<string>__ROOT__/data/logs/web.log</string>
+	<key>StandardErrorPath</key>
+	<string>__ROOT__/data/logs/web.log</string>
+</dict>
+</plist>

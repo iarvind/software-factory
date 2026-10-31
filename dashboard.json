@@ -1,0 +1,7 @@
+{
+  "app": "software-factory",
+  "deploy": "make deploy",
+  "services": [
+    { "name": "web", "kind": "launchd", "unit": "com.factory.web", "port": 8282, "health": "/api/healthz", "needs": ["platform/postgres"], "description": "Software factory — intake from Slack/Jira/GitHub/schedules/stats, agents plan·build·verify·ship, live status board (node server/index.ts, database factory)" }
+  ]
+}

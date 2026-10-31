@@ -1,0 +1,14 @@
+{
+  "name": "Software Factory",
+  "short_name": "Factory",
+  "description": "Requests in, shipped changes out: what the agents are planning, building and waiting on.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f5f7",
+  "theme_color": "#f5f5f7",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

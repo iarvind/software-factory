@@ -1,0 +1,11 @@
+{
+  "name": "factory-demo",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A tiny service the software factory can practise on.",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  }
+}
