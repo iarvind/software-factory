@@ -3,8 +3,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { invalidate, patch, post, useApi } from "../lib/api";
 import { splitLines } from "../lib/format";
 import { useMe } from "../lib/session";
-import type { Gates, Limits, McpServer, Project, ProjectDefaults } from "../lib/types";
-import { Button, Empty, ErrorNote, Field, Input, Loading, Page, Segmented, Select, Textarea, Toggle, toast } from "../components/ui";
+import type { ClaudeMcp, Gates, Limits, McpServer, Project, ProjectDefaults } from "../lib/types";
+import { Button, Empty, ErrorNote, Field, Group, Input, Loading, Page, Segmented, Select, Sheet, Textarea, Toggle, toast } from "../components/ui";
 
 export const GATE_HELP: Record<keyof Gates, Record<string, string>> = {
   plan: { manual: "A person approves every plan before building starts.", auto: "Building starts as soon as a plan is ready.", auto_low_risk: "Low and medium risk plans go ahead; high risk waits for a person." },
@@ -110,6 +110,7 @@ export default function ProjectEdit() {
   const [slugTouched, setSlugTouched] = useState(editing);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [importing, setImporting] = useState(false);
   useEffect(() => { if (!f && editing && project) setF(fromProject(project)); else if (!f && !editing && defaults) setF(fresh(defaults)); }, [f, editing, project, defaults]);
 
   if (!me.canEdit) return <Page title="Project"><Empty title="Members only" hint="Viewers can look at projects but not change them." /></Page>;
@@ -236,11 +237,27 @@ export default function ProjectEdit() {
           <Field label="Folders the agent may read" hint="One full path per line. Outside the worktree, read only: another repository, a shared library, generated docs.">
             <Textarea rows={2} {...text("dirs")} className="mono-input" placeholder="~/Self/shared-lib" />
           </Field>
-          <Field label="MCP servers" hint={<>JSON, the same shape as an .mcp.json file. Put keys under Environment below and write them here as <span className="mono">{"${NAME}"}</span>; other values are hidden once saved. Claude runner only.</>}>
+          <Field label="MCP servers" hint={<>JSON, the same shape as an .mcp.json file. Claude runner only. Keys can go right here: once saved they are hidden, and they reach the MCP server, not the agent's shell. <span className="mono">{"${NAME}"}</span> takes a value from Environment below, which the agent's shell sees too.</>}>
             <Textarea rows={6} {...text("mcp")} className="mono-input" aria-invalid={Boolean(mcpError)} spellCheck={false}
-              placeholder={'{\n  "grafana": {\n    "command": "mcp-grafana",\n    "env": { "GRAFANA_URL": "https://grafana.example.com", "GRAFANA_API_KEY": "${GRAFANA_API_KEY}" }\n  }\n}'} />
+              placeholder={'{\n  "grafana": {\n    "command": "mcp-grafana",\n    "env": { "GRAFANA_URL": "https://grafana.example.com", "GRAFANA_SERVICE_ACCOUNT_TOKEN": "glsa_…" }\n  }\n}'} />
           </Field>
           {mcpError && <p className="error" role="alert">{mcpError}</p>}
+          {editing && !locked && <div className="inline">
+            <Button variant="secondary" size="sm" onClick={() => setImporting(true)}>Copy from Claude Code</Button>
+            <span className="quiet">The servers <span className="mono">claude mcp add</span> set up on the machine the factory runs on.</span>
+          </div>}
+          {importing && id && <McpImport projectId={id} onClose={() => setImporting(false)} onImported={(p, names) => {
+            // Into the box as well, keeping whatever else is typed there; saving the form later keeps the hidden keys.
+            setF((cur) => {
+              if (!cur) return cur;
+              const now = parseMcp(cur.mcp);
+              const merged = { ...("value" in now ? now.value : {}), ...Object.fromEntries(names.map((n) => [n, p.tools.mcp[n]])) };
+              return { ...cur, mcp: mcpText(merged) };
+            });
+            invalidate(`/api/projects/${id}`);
+            toast(`Copied ${names.join(", ")}`);
+            setImporting(false);
+          }} />}
         </FormCard>
 
         <FormCard title="Environment" disabled={locked} hint="Variables for the commands and the agent. Saved values are never shown again; type a new value to replace one.">
@@ -262,6 +279,57 @@ export default function ProjectEdit() {
 }
 
 /** `disabled` locks every control inside at once, the way a fieldset does. */
+const SCOPE: Record<ClaudeMcp["scope"], string> = { user: "every folder", local: "one folder", project: ".mcp.json" };
+
+/** Pick servers from Claude Code's config on the factory's machine; the server copies them, values and all, into the project. */
+function McpImport({ projectId, onClose, onImported }: { projectId: string; onClose: () => void; onImported: (p: Project, names: string[]) => void }) {
+  const { data, error, reload } = useApi<{ config: string; servers: ClaudeMcp[] }>(`/api/projects/${projectId}/mcp/claude`);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const flip = (k: string) => setPicked((cur) => { const next = new Set(cur); if (next.has(k)) next.delete(k); else next.add(k); return next; });
+  const copy = async () => {
+    setBusy(true); setErr("");
+    try {
+      const r = await post<{ project: Project; imported: string[] }>(`/api/projects/${projectId}/mcp/import`, { keys: [...picked] });
+      onImported(r.project, r.imported);
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setBusy(false); }
+  };
+  return (
+    <Sheet open onClose={onClose} title="Copy MCP servers from Claude Code" wide
+      footer={<>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button onClick={() => void copy()} disabled={!picked.size || busy}>{busy ? "Copying…" : picked.size > 1 ? `Copy ${picked.size} servers` : "Copy server"}</Button>
+      </>}>
+      {error && <ErrorNote error={error} onRetry={reload} />}
+      {!data && !error && <Loading label="Reading Claude Code's config" />}
+      {data && (
+        <>
+          <p className="quiet">From <span className="mono">{data.config}</span> on the machine the factory runs on, and this repository's <span className="mono">.mcp.json</span>. Settings are copied as they are and their values stay on that machine: hidden here, handed to the MCP server only. claude.ai connectors are not listed; <span className="mono">claude -p</span> cannot use them.</p>
+          {!data.servers.length
+            ? <Empty title="No MCP servers set up there" hint={<>Add one on that machine with <span className="mono">claude mcp add</span>, as the user the factory runs as, or type it into the box.</>} />
+            : <Group>{data.servers.map((m) => (
+                <label key={m.key} className="row clickable mcp-pick">
+                  <input type="checkbox" checked={picked.has(m.key)} onChange={() => flip(m.key)} />
+                  <div className="row-main">
+                    <div className="row-title">{m.name}<span className="tag" title={m.where}>{SCOPE[m.scope]}</span>{m.inProject && <span className="tag">replaces this project's {m.name}</span>}</div>
+                    <div className="row-sub mono">{m.url ?? [m.command, ...m.args].join(" ")}</div>
+                    <div className="cand-cmds">
+                      {m.scope === "local" && <span>set up in <span className="mono">{m.where}</span></span>}
+                      {m.env.length > 0 && <span>env <span className="mono">{m.env.join(", ")}</span></span>}
+                      {m.headers.length > 0 && <span>headers <span className="mono">{m.headers.join(", ")}</span></span>}
+                      {m.url && !m.headers.length && <span>signs in through a browser? Then it may not work unattended.</span>}
+                    </div>
+                  </div>
+                </label>
+              ))}</Group>}
+        </>
+      )}
+      {err && <p className="error" role="alert">{err}</p>}
+    </Sheet>
+  );
+}
+
 function FormCard({ title, hint, disabled, children }: { title: string; hint?: string; disabled?: boolean; children: ReactNode }) {
   return (
     <fieldset className="form-card" disabled={disabled}>

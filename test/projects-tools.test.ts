@@ -1,6 +1,7 @@
 // What a project lets its agents reach: folders to read and MCP servers, with the servers' keys kept out of the API's answers.
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import { Hono } from "hono";
 import { skipIfNoDb, tempDir, useTestDb } from "./helpers.ts";
@@ -59,6 +60,45 @@ describe("project tools: folders and MCP servers", { skip: skipIfNoDb }, () => {
     const fresh = await call("PATCH", `/projects/${created.body.id}`, { tools: { mcp: { ...edited, other: { command: "x", env: { K: "••••••" } } } } });
     assert.equal(fresh.status, 400);
     assert.match(fresh.body.error, /other env K has no saved value/);
+  });
+
+  test("copying Claude Code's servers: the browser sees names, the project gets the values", async () => {
+    const home = tempDir("factory-claude-");
+    process.env.CLAUDE_CONFIG_DIR = home;
+    try {
+      fs.writeFileSync(path.join(home, ".claude.json"), JSON.stringify({
+        mcpServers: { grafana: { command: "mcp-grafana", env: { GRAFANA_URL: "https://g.example.com", GRAFANA_SERVICE_ACCOUNT_TOKEN: "glsa_secret" } } },
+        projects: { "/elsewhere": { mcpServers: { grafana: { command: "other-grafana" }, linear: { type: "http", url: "https://mcp.linear.app/mcp" } } } },
+      }));
+      const p = await call("POST", "/projects", { slug: "ops", name: "Ops", local_path: shared, tools: { mcp: { linear: { command: "old" } } } });
+      const list = await call("GET", `/projects/${p.body.id}/mcp/claude`);
+      assert.equal(list.status, 200);
+      assert.ok(!JSON.stringify(list.body).includes("glsa_secret") && !JSON.stringify(list.body).includes("g.example.com"));
+      assert.deepEqual(list.body.servers.map((s: any) => `${s.scope}:${s.name}:${s.inProject}`), ["user:grafana:false", "local:grafana:false", "local:linear:true"]);
+      assert.equal((await call("GET", `/projects/${p.body.id}/mcp/claude`, undefined, "member")).status, 403);
+
+      const [user, local, linear] = list.body.servers.map((s: any) => s.key);
+      const both = await call("POST", `/projects/${p.body.id}/mcp/import`, { keys: [user, local] });
+      assert.equal(both.status, 400);
+      assert.match(both.body.error, /two of the picked servers are named grafana/);
+
+      const r = await call("POST", `/projects/${p.body.id}/mcp/import`, { keys: [user, linear] });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.deepEqual(r.body.imported, ["grafana", "linear"]);
+      assert.equal(r.body.project.tools.mcp.grafana.env.GRAFANA_SERVICE_ACCOUNT_TOKEN, "••••••");
+      const [row] = await db.q<{ tools: { mcp: Record<string, any> } }>("select tools from projects where id = $1", [p.body.id]);
+      assert.equal(row.tools.mcp.grafana.env.GRAFANA_SERVICE_ACCOUNT_TOKEN, "glsa_secret");
+      assert.deepEqual(row.tools.mcp.linear, { type: "http", url: "https://mcp.linear.app/mcp" }, "the copy replaces the project's own linear");
+
+      // The form then saves what it was shown: the copied keys survive.
+      assert.equal((await call("PATCH", `/projects/${p.body.id}`, { tools: { mcp: r.body.project.tools.mcp } })).status, 200);
+      const [again] = await db.q<{ tools: { mcp: Record<string, any> } }>("select tools from projects where id = $1", [p.body.id]);
+      assert.equal(again.tools.mcp.grafana.env.GRAFANA_SERVICE_ACCOUNT_TOKEN, "glsa_secret");
+      assert.match((await call("POST", `/projects/${p.body.id}/mcp/import`, { keys: ["user:/nowhere:gone"] })).body.error, /no longer in Claude Code's config/);
+    } finally {
+      delete process.env.CLAUDE_CONFIG_DIR;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test("folders must be full paths that exist; a server needs a command or a url; only admins change tools", async () => {

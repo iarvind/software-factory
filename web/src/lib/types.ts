@@ -51,9 +51,11 @@ export type Gates = { plan: GatePolicy; merge: GatePolicy; deploy: "manual" | "a
 export type Limits = { maxTurns: number; maxBudgetUsd: number; maxMinutes: number; maxFixRounds: number; concurrency: number; verifyMinutes: number; maxInReview: number;
   /** Minutes to watch health_url after a deploy; two failed checks block the item. */
   observeMinutes: number };
-/** One MCP server as the CLI takes it; env and header values come back hidden unless they are a ${NAME} reference. */
+/** One MCP server as the CLI takes it; keys (env and header values, key-like args) come back as ••••••. */
 export type McpServer = { type?: "stdio" | "http" | "sse"; command?: string; args?: string[]; env?: Record<string, string>; url?: string; headers?: Record<string, string> };
 export type Tools = { mode: "readonly" | "edit" | "full"; allow: string[]; deny: string[]; dirs: string[]; mcp: Record<string, McpServer> };
+/** GET /api/projects/:id/mcp/claude: one server Claude Code has on the factory's machine; names of its settings, never their values. */
+export type ClaudeMcp = { key: string; name: string; scope: "user" | "local" | "project"; where: string; type: string; command: string | null; args: string[]; url: string | null; env: string[]; headers: string[]; inProject: boolean };
 
 export type ItemDetail = {
   item: Item; runs: Run[]; approvals: Approval[]; feedback: Feedback[]; posts: Post[];

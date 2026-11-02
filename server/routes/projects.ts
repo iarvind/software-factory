@@ -4,7 +4,8 @@ import { z } from "zod";
 import { q, one } from "../db.ts";
 import { atLeast, audit, type Auth } from "../lib/auth.ts";
 import { HttpError, body, idParam, parse, setClause, slug } from "../lib/http.ts";
-import { DEFAULT_GATES, DEFAULT_LIMITS, DEFAULT_TOOLS, addNote, deleteNote, listNotes, listProjects, mustProject, publicProject, unmaskMcp, withDefaults, type Project, type Tools as ToolPolicy } from "../lib/projects.ts";
+import { DEFAULT_GATES, DEFAULT_LIMITS, DEFAULT_TOOLS, addNote, deleteNote, listNotes, listProjects, mustProject, publicProject, withDefaults, type Project, type Tools as ToolPolicy } from "../lib/projects.ts";
+import { claudeServers, describe, unmaskMcp } from "../lib/mcp.ts";
 import { baseRef, githubRepo, hasRemote, repoDir } from "../lib/git.ts";
 import { run } from "../lib/exec.ts";
 import { discover, expandHome, folders, inspectRepo, registeredPaths } from "../lib/discover.ts";
@@ -124,6 +125,30 @@ projectRoutes.patch("/projects/:id", async (c) => {
   const out = await one<Project>(`update projects set ${sql}, updated_at = now() where id = $1 returning *`, [id, ...params]);
   await audit(a.user.id, "project.update", p.slug, Object.keys(b));
   return c.json(publicProject(withDefaults(out!)));
+});
+
+// The MCP servers Claude Code already has on this machine, offered for copying into a project: names and
+// shapes go to the browser, the values stay here and are copied server-side.
+const checkouts = (p: Project) => [repoDir(p), ...(p.local_path ? [expandHome(p.local_path)] : [])];
+projectRoutes.get("/projects/:id/mcp/claude", async (c) => {
+  admin(who(c));
+  const p = await mustProject(idParam(c));
+  const { config, found } = await claudeServers(checkouts(p));
+  return c.json({ config, servers: found.map((f) => ({ ...describe(f), inProject: f.name in p.tools.mcp })) });
+});
+projectRoutes.post("/projects/:id/mcp/import", async (c) => {
+  const a = admin(who(c));
+  const p = await mustProject(idParam(c));
+  const b = await body(c, z.object({ keys: z.array(z.string().max(2000)).min(1).max(50) }));
+  const { found } = await claudeServers(checkouts(p));
+  const picked = b.keys.map((k) => found.find((f) => f.key === k) ?? (() => { throw new HttpError(400, "that server is no longer in Claude Code's config; look again"); })());
+  const names = picked.map((f) => f.name);
+  const twice = names.find((n, i) => names.indexOf(n) !== i);
+  if (twice) throw new HttpError(400, `two of the picked servers are named ${twice}; pick one`);
+  const mcp = { ...p.tools.mcp, ...Object.fromEntries(picked.map((f) => [f.name, f.server])) };
+  const out = await one<Project>("update projects set tools = $2, updated_at = now() where id = $1 returning *", [p.id, JSON.stringify({ ...p.tools, mcp })]);
+  await audit(a.user.id, "project.mcp_import", p.slug, names);
+  return c.json({ project: publicProject(withDefaults(out!)), imported: names });
 });
 
 projectRoutes.delete("/projects/:id", async (c) => {
