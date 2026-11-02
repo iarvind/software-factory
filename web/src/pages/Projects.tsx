@@ -1,8 +1,8 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { invalidate, invalidateKey, post, useApi } from "../lib/api";
 import { useMe } from "../lib/session";
-import type { Candidate, Discovery, Gates, Project, ProjectDefaults } from "../lib/types";
+import type { Candidate, Discovery, Folders, Gates, Project, ProjectDefaults } from "../lib/types";
 import { Button, ButtonLink, Empty, ErrorNote, Facts, Field, Group, Input, Loading, Page, Row, Segmented, Select, Sheet, Textarea, toast } from "../components/ui";
 import { Icon } from "../components/icons";
 import { GATE_HELP, GATE_OPTIONS, OPTION_LABEL, toSlug } from "./ProjectEdit";
@@ -14,7 +14,7 @@ export default function Projects() {
   const { data, error, reload } = useApi<Project[]>("/api/projects");
   const [finding, setFinding] = useState(false);
   // Look again on every open: a folder cloned since the last look should be offered.
-  const find = () => { invalidateKey(DISCOVER); setFinding(true); };
+  const find = () => { invalidateKey(DISCOVER, `${DISCOVER}/folders`); setFinding(true); };
   const fromMac = <Button variant="secondary" onClick={find}>Add from this Mac</Button>;
   return (
     <Page title="Projects" subtitle="The repositories the factory may work on: how to test, build and ship each, which gates a person opens, and how much an agent may spend."
@@ -52,19 +52,65 @@ function DiscoverSheet({ onClose }: { onClose: () => void }) {
 
 const Roots = ({ roots }: { roots: string[] }) => <>{roots.map((r, i) => <span key={r}>{i ? (i === roots.length - 1 ? " or " : ", ") : ""}<span className="mono">{r}</span></span>)}</>;
 
+// The folders looked in before, newest first, so a repository outside rack's roots is one click the next time.
+const RECENT = "factory.discover.folders";
+function recentFolders(): string[] {
+  try { const v = JSON.parse(localStorage.getItem(RECENT) ?? "[]"); return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").slice(0, 6) : []; } catch { return []; }
+}
+function remember(dir: string) {
+  try { localStorage.setItem(RECENT, JSON.stringify([dir, ...recentFolders().filter((d) => d !== dir)].slice(0, 6))); } catch { /* private mode */ }
+}
+
 function CandidateList({ onPick, onClose }: { onPick: (c: Candidate) => void; onClose: () => void }) {
-  const { data, error, reload } = useApi<Discovery>(DISCOVER);
+  const listId = useId();
+  // null: rack's roots. A folder: that folder, and the checkouts directly inside it.
+  const [dir, setDir] = useState<string | null>(null);
+  const [typed, setTyped] = useState("");
+  const [recent, setRecent] = useState(recentFolders);
+  const { data, error, reload } = useApi<Discovery>(dir ? `${DISCOVER}?dir=${encodeURIComponent(dir)}` : DISCOVER);
+  // Suggest the folders inside what has been typed up to its last slash; the browser filters by the rest.
+  const parent = typed.includes("/") ? typed.slice(0, typed.lastIndexOf("/") + 1) : null;
+  const { data: inside } = useApi<Folders>(parent ? `${DISCOVER}/folders?dir=${encodeURIComponent(parent)}` : null);
+  // Remember a folder once it has been looked in, not when it was a typo: the answer for the folder before it stays on screen
+  // for a render after the switch, so wait for a different one.
+  const shown = useRef<Discovery | undefined>(undefined);
+  useEffect(() => {
+    if (!dir || !data || error || data === shown.current) return;
+    remember(dir);
+    setRecent(recentFolders());
+  }, [dir, data, error]);
+  const look = (d: string | null) => {
+    const v = d?.trim().replace(/(.)\/+$/, "$1") || null;
+    shown.current = data;
+    setDir(v);
+    setTyped(v ?? "");
+  };
+  const where = data ? <Roots roots={data.roots} /> : null;
   return (
     <Sheet open onClose={onClose} title="Add from this Mac" wide>
+      <form className="look-in" onSubmit={(e) => { e.preventDefault(); look(typed); }}>
+        <Field label="Look in" hint="A folder that holds git checkouts, or one checkout itself. Anywhere on this Mac; ~ is your home folder.">
+          <div className="inline">
+            <Input className="mono-input grow" value={typed} onChange={(e) => setTyped(e.target.value)} list={listId} placeholder="~/code or /path/to/repo" autoComplete="off" spellCheck={false} />
+            <Button type="submit" variant="secondary" disabled={!typed.trim()}>Look</Button>
+          </div>
+          <datalist id={listId}>{inside?.folders.map((f) => { const v = parent + f.path.slice(f.path.lastIndexOf("/") + 1); return <option key={f.path} value={v}>{f.git ? "git checkout" : undefined}</option>; })}</datalist>
+        </Field>
+        <div className="inline-tight look-picks">
+          <button type="button" className={`chip pick ${dir === null ? "on" : ""}`} onClick={() => look(null)}>rack's folders</button>
+          {recent.map((r) => <button type="button" key={r} className={`chip pick mono ${dir === r ? "on" : ""}`} onClick={() => look(r)}>{r}</button>)}
+        </div>
+      </form>
       {error && <ErrorNote error={error} onRetry={reload} />}
-      {!data && !error && <Loading label="Looking for repositories" />}
+      {!data && !error && <Loading label={dir ? `Looking in ${dir}` : "Looking for repositories"} />}
       {data && !data.candidates.length && (
-        <Empty title={<>Nothing new under <Roots roots={data.roots} />.</>} hint="Every git checkout there is a project already. A repository somewhere else can still be added by its path."
+        <Empty title={<>Nothing new in {where}.</>}
+          hint={dir ? "No git checkout there that is not a project already. Try the folder that holds the repository, or the repository's own folder." : "Every git checkout there is a project already. Type another folder above to look somewhere else."}
           action={<ButtonLink to="/projects/new">New project</ButtonLink>} />
       )}
       {data && data.candidates.length > 0 && (
         <>
-          <p className="quiet">Git checkouts under <Roots roots={data.roots} /> that are not projects yet. Pick one to check what was guessed from its files before adding it.</p>
+          <p className="quiet">Git checkouts {dir ? "in" : "under"} {where} that are not projects yet. Pick one to check what was guessed from its files before adding it.</p>
           <Group>{data.candidates.map((c) => <CandidateRow key={c.path} c={c} onPick={() => onPick(c)} />)}</Group>
         </>
       )}

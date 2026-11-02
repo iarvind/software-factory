@@ -7,7 +7,7 @@ import { HttpError, body, idParam, parse, setClause, slug } from "../lib/http.ts
 import { DEFAULT_GATES, DEFAULT_LIMITS, DEFAULT_TOOLS, addNote, deleteNote, listNotes, listProjects, mustProject, withDefaults, type Project } from "../lib/projects.ts";
 import { baseRef, githubRepo, hasRemote, repoDir } from "../lib/git.ts";
 import { run } from "../lib/exec.ts";
-import { discover, expandHome, inspectRepo, registeredPaths } from "../lib/discover.ts";
+import { discover, expandHome, folders, inspectRepo, registeredPaths } from "../lib/discover.ts";
 import { listRunners } from "../lib/runners/index.ts";
 import type { Env } from "./auth.ts";
 
@@ -62,7 +62,14 @@ projectRoutes.post("/projects", async (c) => {
 });
 
 // Before /projects/:id, which would otherwise take "discover" for an id.
-projectRoutes.get("/projects/discover", async (c) => { member(who(c)); return c.json(await discover()); });
+// Looking in a folder of one's choosing lists what is on this Mac, so that, like adding a project, is an admin's.
+projectRoutes.get("/projects/discover", async (c) => {
+  const dir = c.req.query("dir");
+  if (!dir) { member(who(c)); return c.json(await discover()); }
+  admin(who(c));
+  return c.json(await discover(dir));
+});
+projectRoutes.get("/projects/discover/folders", async (c) => { admin(who(c)); return c.json(await folders(c.req.query("dir") ?? "")); });
 
 projectRoutes.post("/projects/discover/register", async (c) => {
   const a = admin(who(c));

@@ -92,6 +92,33 @@ describe("discover: checkouts under the roots, with suggested commands", { skip:
     });
   });
 
+  test("discover(folder): any folder on this Mac in place of the roots, and the folder itself when it is a checkout", async () => {
+    // Somewhere rack does not look: a folder holding a checkout, beside a checkout of its own.
+    const elsewhere = path.join(HOME, "elsewhere");
+    gitIn(HOME, "init", "-q", "-b", "main", path.join(elsewhere, "far-app"));
+    let r = await discover.discover("~/elsewhere/");
+    assert.deepEqual(r.roots, [elsewhere], "the folder, ~ expanded and the trailing slash dropped, is the only root");
+    assert.deepEqual(r.candidates.map((c) => c.path), [path.join(elsewhere, "far-app")]);
+
+    r = await discover.discover(path.join(elsewhere, "far-app"));
+    assert.deepEqual(r.candidates.map((c) => c.name), ["far-app"], "a checkout is offered itself");
+    await db.q("insert into projects (slug, name, local_path) values ('far-app', 'far-app', '~/elsewhere/far-app')");
+    assert.deepEqual((await discover.discover(path.join(elsewhere, "far-app"))).candidates, [], "unless it is a project already");
+
+    await assert.rejects(discover.discover("~/nowhere"), /not a folder on this machine/);
+    await assert.rejects(discover.discover(path.join(apps, "todo.txt")), /not a folder on this machine/);
+  });
+
+  test("folders(): the folders inside what was typed up to its last slash, marking checkouts", async () => {
+    const names = (r: Awaited<ReturnType<typeof discover.folders>>) => r.folders.map((f) => `${path.basename(f.path)}${f.git ? "*" : ""}`);
+    const r = await discover.folders("~/apps/no");
+    assert.equal(r.dir, apps, "the part after the last slash is left for the browser to filter");
+    // Hidden folders and files are left out; a symlink to a folder is a folder; a worktree is not a checkout.
+    assert.deepEqual(names(r), ["a-worktree", "go-svc*", "node-app*", "notes", "registered*", "the-node-app-again*"]);
+    assert.deepEqual(names(await discover.folders(`${apps}/`)), names(r));
+    assert.deepEqual((await discover.folders("~/missing/")).folders, []);
+  });
+
   test("inspectRepo: a checkout by any spelling of its path; not a worktree, a plain folder or nothing", async () => {
     assert.equal((await discover.inspectRepo("~/apps/node-app"))?.path, nodeApp);
     assert.equal((await discover.inspectRepo(path.join(apps, "the-node-app-again")))?.path, nodeApp, "a symlink resolves to the checkout");

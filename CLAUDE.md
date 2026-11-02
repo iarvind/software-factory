@@ -30,3 +30,6 @@ Read `README.md` first; it is accurate. These are the facts that save time.
   at `failed_stage`.
 - Data: `data/repos/<slug>` clones, `data/work/<slug>/<item>` worktrees, `data/logs`. All gitignored.
 - Style: short comments that say why, no ORMs, few dependencies, plain words in UI copy.
+- **When the work is done, commit and push it.** Once `npm run typecheck` and `npm test` pass, commit
+  to the current branch with a message that says why, and `git push` to `origin`. Do not leave
+  finished work uncommitted. Deploying (`make deploy`) is still a separate step, only when asked.

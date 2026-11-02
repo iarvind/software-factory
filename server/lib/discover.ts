@@ -4,6 +4,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { run } from "./exec.ts";
+import { HttpError } from "./http.ts";
 import { listProjects } from "./projects.ts";
 
 export type Suggestions = { test_command: string | null; build_command: string | null; deploy_command: string | null; setup_command: string | null; health_url: string | null; instructions: string | null };
@@ -149,23 +150,30 @@ export async function inspectRepo(input: string): Promise<Candidate | null> {
   } catch { return null; }
 }
 
-/** Unregistered git checkouts one level under each root, by name. */
-export async function discover(): Promise<{ roots: string[]; candidates: Candidate[] }> {
-  const rs = await roots();
-  const taken = await registeredPaths();
+/** Unregistered git checkouts one level under each root, by name. With a folder, that folder alone stands in for
+ *  the roots, and it is offered itself when it is a checkout: a repository anywhere on this Mac can be added. */
+export async function discover(folder?: string): Promise<{ roots: string[]; candidates: Candidate[] }> {
+  let rs: string[];
   const dirs: string[] = [];
   const seen = new Set<string>();
+  const taken = await registeredPaths();
+  const offer = async (dir: string) => {
+    if (seen.has(dir) || taken.has(dir) || !(await isCheckout(dir))) return;
+    seen.add(dir);
+    dirs.push(dir);
+  };
+  if (folder) {
+    const dir = await real(path.resolve(expandHome(folder.trim())));
+    if (!(await fs.stat(dir).then((st) => st.isDirectory(), () => false))) throw new HttpError(400, `${folder} is not a folder on this machine`);
+    rs = [dir];
+    await offer(dir);
+  } else rs = await roots();
   for (const root of rs) {
     let entries: import("node:fs").Dirent[];
     try { entries = await fs.readdir(root, { withFileTypes: true }); } catch { continue; }
     for (const e of entries) {
       if (e.name.startsWith(".") || !(e.isDirectory() || e.isSymbolicLink())) continue;
-      try {
-        const dir = await real(path.join(root, e.name));
-        if (seen.has(dir) || taken.has(dir) || !(await isCheckout(dir))) continue;
-        seen.add(dir);
-        dirs.push(dir);
-      } catch { /* unreadable: skip */ }
+      try { await offer(await real(path.join(root, e.name))); } catch { /* unreadable: skip */ }
     }
   }
   dirs.sort((a, b) => path.basename(a).localeCompare(path.basename(b), undefined, { sensitivity: "base" }));
@@ -177,4 +185,19 @@ export async function discover(): Promise<{ roots: string[]; candidates: Candida
     while (next < picked.length) { const i = next++; out[i] = await inspectRepo(picked[i]); }
   }));
   return { roots: rs, candidates: out.filter((c): c is Candidate => c !== null) };
+}
+
+/** The folders inside one folder, for typing a path: the part before the last slash is listed, the rest is left to filter. */
+export async function folders(input: string): Promise<{ dir: string; folders: Array<{ path: string; git: boolean }> }> {
+  const typed = expandHome(input.trim() || "~/");
+  const dir = path.resolve(typed.endsWith("/") ? typed : path.dirname(typed));
+  let entries: import("node:fs").Dirent[] = [];
+  try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { /* missing or unreadable: nothing to offer */ }
+  const names = entries.filter((e) => !e.name.startsWith(".") && (e.isDirectory() || e.isSymbolicLink())).map((e) => e.name)
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })).slice(0, 200);
+  const out = await Promise.all(names.map(async (n) => {
+    const p = path.join(dir, n);
+    return (await fs.stat(p).then((st) => st.isDirectory(), () => false)) ? { path: p, git: await isCheckout(p) } : null;
+  }));
+  return { dir, folders: out.filter((f): f is { path: string; git: boolean } => f !== null) };
 }

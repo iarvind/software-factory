@@ -74,6 +74,8 @@ export type ProjectDefaults = { gates: Gates; limits: Limits; tools: Tools; runn
 export type Suggestions = { test_command: string | null; build_command: string | null; deploy_command: string | null; setup_command: string | null; health_url: string | null; instructions: string | null };
 export type Candidate = { path: string; name: string; slug: string; default_branch: string; remote: string | null; github: string | null; suggestions: Suggestions };
 export type Discovery = { roots: string[]; candidates: Candidate[] };
+/** GET /api/projects/discover/folders: the folders inside one, for typing a path. */
+export type Folders = { dir: string; folders: Array<{ path: string; git: boolean }> };
 export type ProjectCheck = Record<string, unknown> & { ok?: boolean; error?: string; dir?: string };
 export type Note = { id: number; project_id: number | null; item_id: number | null; author: string; body: string; tags: string[]; created_at: string };
 

@@ -171,7 +171,7 @@ the tests (end-to-end against `factory_test` with a fake runner; no model is cal
 the server through launchd (`launchctl`) if the unit is installed, and otherwise as a background
 process. `make launchd-install` writes a macOS LaunchAgent. `dashboard.json` registers the app
 with rack, the local dashboard. **Add from this Mac** looks for checkouts under rack's roots
-(`~/Self` when there are none), and Telegram goes through a separate notifier app (`NOTIFIER_URL`;
+(`~/Self` when there are none), or in any folder an admin types, and Telegram goes through a separate notifier app (`NOTIFIER_URL`;
 empty turns it off). None of this is needed elsewhere. The server needs Node 22.18+, git, an
 agent CLI, and a Postgres it can reach at `DATABASE_URL` (it applies its migrations at boot); `gh`
 is needed only for pull-request delivery. So on any machine: fill in `.env`, then
