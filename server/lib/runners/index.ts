@@ -27,9 +27,11 @@ export type RunSpec = {
   /** Pin the id of a new session so it can be resumed later even if the result is lost. */
   sessionId?: string;
   addDirs?: string[];
+  /** Folders outside cwd the agent may read but not change. */
+  readDirs?: string[];
   env?: Record<string, string>;
-  /** Extra MCP servers (JSON config) the runner may load, if it supports them. */
-  mcpConfig?: string;
+  /** MCP servers by name, in the usual mcpServers shape, for a runner that supports them; allowed when given. */
+  mcp?: Record<string, unknown>;
 };
 
 export type RunEvent =
@@ -41,7 +43,7 @@ export type RunEvent =
   /** Plan usage as the CLI reports it (0–1 of each window); the factory throttles on it. */
   | { type: "usage"; fiveHour?: number; sevenDay?: number; resetsAt?: number; status?: string; raw?: unknown }
   /** The agent asked for something the policy did not allow. */
-  | { type: "denied"; tool: string; message?: string };
+  | { type: "denied"; tool: string; id?: string; message?: string };
 
 export type RunResult = {
   ok: boolean;

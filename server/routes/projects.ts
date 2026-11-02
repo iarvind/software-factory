@@ -4,7 +4,7 @@ import { z } from "zod";
 import { q, one } from "../db.ts";
 import { atLeast, audit, type Auth } from "../lib/auth.ts";
 import { HttpError, body, idParam, parse, setClause, slug } from "../lib/http.ts";
-import { DEFAULT_GATES, DEFAULT_LIMITS, DEFAULT_TOOLS, addNote, deleteNote, listNotes, listProjects, mustProject, withDefaults, type Project } from "../lib/projects.ts";
+import { DEFAULT_GATES, DEFAULT_LIMITS, DEFAULT_TOOLS, addNote, deleteNote, listNotes, listProjects, mustProject, publicProject, unmaskMcp, withDefaults, type Project, type Tools as ToolPolicy } from "../lib/projects.ts";
 import { baseRef, githubRepo, hasRemote, repoDir } from "../lib/git.ts";
 import { run } from "../lib/exec.ts";
 import { discover, expandHome, folders, inspectRepo, registeredPaths } from "../lib/discover.ts";
@@ -18,7 +18,15 @@ const admin = (a: Auth) => { if (!atLeast(a.user, "admin")) throw new HttpError(
 
 const Gates = z.object({ plan: z.enum(["manual", "auto", "auto_low_risk"]), merge: z.enum(["manual", "auto", "auto_low_risk"]), deploy: z.enum(["manual", "auto", "off"]), review: z.enum(["ai", "off"]) }).partial();
 const Limits = z.object({ maxTurns: z.number().int().min(1).max(2000), maxBudgetUsd: z.number().min(0.1).max(500), maxMinutes: z.number().int().min(1).max(720), maxFixRounds: z.number().int().min(0).max(10), concurrency: z.number().int().min(1).max(10), verifyMinutes: z.number().int().min(1).max(240), maxInReview: z.number().int().min(1).max(50), observeMinutes: z.number().int().min(0).max(120) }).partial();
-const Tools = z.object({ mode: z.enum(["readonly", "edit", "full"]), allow: z.array(z.string().max(200)).max(100), deny: z.array(z.string().max(200)).max(100) }).partial();
+const McpServer = z.object({
+  type: z.enum(["stdio", "http", "sse"]).optional(), command: z.string().min(1).max(500).optional(), args: z.array(z.string().max(2000)).max(50).optional(),
+  env: z.record(z.string(), z.string().max(4000)).optional(), url: z.string().url().max(1000).optional(), headers: z.record(z.string(), z.string().max(4000)).optional(),
+}).refine((s) => Boolean(s.command) !== Boolean(s.url), "an MCP server needs a command or a url (not both)");
+const Tools = z.object({
+  mode: z.enum(["readonly", "edit", "full"]), allow: z.array(z.string().max(200)).max(100), deny: z.array(z.string().max(200)).max(100),
+  dirs: z.array(z.string().min(1).max(500).refine((d) => /^[/~]/.test(d), "a folder must be a full path (/… or ~/…)")).max(20),
+  mcp: z.record(z.string().regex(/^[A-Za-z0-9_-]{1,40}$/, "an MCP server name is letters, digits, - and _"), McpServer),
+}).partial();
 const ProjectIn = z.object({
   slug, name: z.string().min(1).max(100), description: z.string().max(2000).nullable().optional(),
   repo_url: z.string().max(500).nullable().optional(), local_path: z.string().max(500).nullable().optional(), default_branch: z.string().min(1).max(100).optional(),
@@ -31,14 +39,22 @@ projectRoutes.get("/projects", async (c) => {
   const projects = await listProjects();
   const counts = await q<{ project_id: number; open: number; done: number }>("select project_id, count(*) filter (where status not in ('done','failed','cancelled'))::int as open, count(*) filter (where status = 'done')::int as done from work_items where project_id is not null group by project_id");
   const by = new Map(counts.map((x) => [x.project_id, x]));
-  return c.json(projects.map((p) => ({ ...p, env: Object.keys(p.env), open: by.get(p.id)?.open ?? 0, done: by.get(p.id)?.done ?? 0 })));
+  return c.json(projects.map((p) => ({ ...publicProject(p), open: by.get(p.id)?.open ?? 0, done: by.get(p.id)?.done ?? 0 })));
 });
 
 projectRoutes.get("/projects/defaults", (c) => c.json({ gates: DEFAULT_GATES, limits: DEFAULT_LIMITS, tools: DEFAULT_TOOLS, runners: listRunners().map((r) => ({ id: r.id, label: r.label, capabilities: r.capabilities })), defaultRunner: process.env.RUNNER || "claude", defaultModel: process.env.CLAUDE_MODEL || "claude-opus-5-5" }));
 
+/** The folders an agent may read must be there; MCP keys sent back hidden keep their saved values. */
+function checkTools(t: Partial<ToolPolicy> | undefined, prev: ToolPolicy | null): Partial<ToolPolicy> | undefined {
+  if (!t) return t;
+  for (const d of t.dirs ?? []) if (!fs.existsSync(expandHome(d))) throw new HttpError(400, `${d} does not exist on this machine`);
+  return t.mcp ? { ...t, mcp: unmaskMcp(t.mcp, prev?.mcp ?? {}) } : t;
+}
+
 export async function createProject(b: z.infer<typeof ProjectIn>, userId: number): Promise<Project> {
   if (!b.repo_url && !b.local_path) throw new HttpError(400, "a project needs a repository URL or a local path");
   if (b.local_path && !fs.existsSync(expandHome(b.local_path))) throw new HttpError(400, `${b.local_path} does not exist on this machine`);
+  b = { ...b, tools: checkTools(b.tools, null) };
   if (b.runner && !listRunners().some((r) => r.id === b.runner)) throw new HttpError(400, `unknown runner ${b.runner}`);
   const exists = await one("select 1 from projects where slug = $1", [b.slug]);
   if (exists) throw new HttpError(409, `a project with slug ${b.slug} exists`);
@@ -58,7 +74,7 @@ const MEMBER_FIELDS = new Set(["name", "description", "instructions", "model", "
 
 projectRoutes.post("/projects", async (c) => {
   const a = admin(who(c));
-  return c.json(await createProject(await body(c, ProjectIn), a.user.id), 201);
+  return c.json(publicProject(await createProject(await body(c, ProjectIn), a.user.id)), 201);
 });
 
 // Before /projects/:id, which would otherwise take "discover" for an id.
@@ -86,10 +102,10 @@ projectRoutes.post("/projects/discover/register", async (c) => {
     setup_command: s.setup_command, test_command: s.test_command, build_command: s.build_command, deploy_command: s.deploy_command, health_url: s.health_url, instructions: s.instructions,
     ...(b.overrides ?? {}),
   });
-  return c.json(await createProject(input, a.user.id), 201);
+  return c.json(publicProject(await createProject(input, a.user.id)), 201);
 });
 
-projectRoutes.get("/projects/:id", async (c) => { const p = await mustProject(idParam(c)); return c.json({ ...p, env: Object.keys(p.env) }); });
+projectRoutes.get("/projects/:id", async (c) => c.json(publicProject(await mustProject(idParam(c)))));
 
 projectRoutes.patch("/projects/:id", async (c) => {
   const a = member(who(c));
@@ -102,12 +118,12 @@ projectRoutes.patch("/projects/:id", async (c) => {
   const patch: Record<string, unknown> = { ...b };
   if (b.gates) patch.gates = { ...p.gates, ...b.gates };
   if (b.limits) patch.limits = { ...p.limits, ...b.limits };
-  if (b.tools) patch.tools = { ...p.tools, ...b.tools };
+  if (b.tools) patch.tools = { ...p.tools, ...checkTools(b.tools, p.tools) };
   if (b.env) { const env = { ...p.env }; for (const [k, v] of Object.entries(b.env)) { if (v === "") delete env[k]; else env[k] = v; } patch.env = env; }
   const { sql, params } = setClause(patch, ["slug", "name", "description", "repo_url", "local_path", "default_branch", "runner", "model", "effort", "setup_command", "test_command", "build_command", "deploy_command", "health_url", "delivery", "gates", "limits", "tools", "env", "instructions", "paused"], 2, ["gates", "limits", "tools", "env"]);
   const out = await one<Project>(`update projects set ${sql}, updated_at = now() where id = $1 returning *`, [id, ...params]);
   await audit(a.user.id, "project.update", p.slug, Object.keys(b));
-  return c.json({ ...withDefaults(out!), env: Object.keys(out!.env ?? {}) });
+  return c.json(publicProject(withDefaults(out!)));
 });
 
 projectRoutes.delete("/projects/:id", async (c) => {

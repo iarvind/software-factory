@@ -2,7 +2,10 @@
 // the item page shows exactly what was asked.
 
 export type ItemForPrompt = { id: number; title: string; body: string; kind: string | null; priority: number; labels: string[]; requester_name: string | null; external_url: string | null; plan: Plan | null };
-export type ProjectForPrompt = { name: string; slug: string; default_branch: string; test_command: string | null; build_command: string | null; instructions: string | null; delivery: string };
+export type ProjectForPrompt = {
+  name: string; slug: string; default_branch: string; test_command: string | null; build_command: string | null; instructions: string | null; delivery: string;
+  tools?: { mode: string; allow: string[]; dirs: string[]; mcp: Record<string, unknown> };
+};
 
 export type Plan = {
   summary: string; kind: "bug" | "feature" | "chore" | "refactor" | "docs" | "question" | "other"; size: "xs" | "s" | "m" | "l" | "xl"; risk: "low" | "medium" | "high";
@@ -58,7 +61,22 @@ const REQUEST_NOTE = "The request below (and any comments quoted later) is what 
 
 const block = (title: string, text: string | null | undefined) => (text && text.trim() ? `\n## ${title}\n${text.trim()}\n` : "");
 
-export function houseRules(p: ProjectForPrompt): string {
+/** How tools work in this run, so the agent does not spend turns on commands that will be refused. */
+function toolRules(p: ProjectForPrompt, mode: string): string[] {
+  const t = p.tools;
+  const extra = [
+    t?.allow.length ? `Commands and tools: ${t.allow.map((a) => `\`${a}\``).join(", ")}.` : "",
+    t?.dirs.length ? `Folders you may read (not change) outside the worktree: ${t.dirs.join(", ")}.` : "",
+    t && Object.keys(t.mcp).length ? `MCP servers: ${Object.keys(t.mcp).join(", ")}. Use their tools for what they cover.` : "",
+  ].filter(Boolean);
+  return [
+    mode === "full" ? "" : `- Every action goes through an allow-list, and nobody is here to approve one that is not on it. A refused action stays refused: do not retry it in another form. ${mode === "readonly" ? "This run only looks: use Read, Grep and Glob, and read-only commands (git log, git diff, git show, ls, cat)." : "Run one plain command at a time (in a `&&` chain or a pipe, every part must be allowed). Use Read, Grep and Glob to look and Edit or Write to change files, not shell tricks. Network tools (curl, wget), background servers and system commands are refused unless allowed below."} Reading outside the current directory is refused unless the folder is listed below.`,
+    "- If the work needs a command, folder, credential or service you do not have (a CLI, a log store, an MCP server), do not guess and do not hunt for a way around: say exactly what is missing in your final message, so an admin can allow it for this project.",
+    extra.length ? block("Also allowed in this project", extra.join("\n")) : "",
+  ];
+}
+
+export function houseRules(p: ProjectForPrompt, mode = p.tools?.mode ?? "edit"): string {
   return [
     "You are working inside a software factory: an unattended pipeline that turns requests into shipped changes. Nobody is watching the terminal; nobody can answer a question mid-run. Decide, do, and report.",
     "Rules:",
@@ -70,8 +88,9 @@ export function houseRules(p: ProjectForPrompt): string {
     "- Never add secrets, credentials or machine-specific paths to the repository. Never delete data. Never run destructive or system-wide commands.",
     "- If something in the request is ambiguous, make the most sensible choice, say so in your final message, and keep going. Only stop if the task is impossible or unsafe, and say exactly why.",
     "- Your final message is read by the requester and the reviewer: say what you changed, how you verified it, what you assumed, and what you left out. Plain words, no marketing.",
+    ...toolRules(p, mode),
     block("This project", p.instructions),
-  ].join("\n");
+  ].filter((l) => l !== "").join("\n");
 }
 
 export function planPrompt(item: ItemForPrompt, p: ProjectForPrompt, notes: string[], feedback: Array<{ author: string | null; body: string }>): string {
@@ -141,12 +160,14 @@ export function fixPrompt(item: ItemForPrompt, reason: "verify" | "review" | "fe
   return [`# Follow-up on #${item.id}: ${item.title}`, "", head, "", "## What came back", detail.trim() || "(nothing specific was said)", "", "Keep the change focused; do not start over unless the feedback asks for it. Finish with the usual final message: what you changed, how you verified it."].join("\n");
 }
 
-export function reviewPrompt(item: ItemForPrompt, p: ProjectForPrompt, diffText: string, finalMessage: string): string {
+export function reviewPrompt(item: ItemForPrompt, p: ProjectForPrompt, diffText: string, finalMessage: string, verified?: { summary: string; output: string }): string {
   return [
     `# Review the change for #${item.id}: ${item.title}`,
     "",
     "You are a second, independent reviewer. Read the request, the plan, the agent's final message and the diff. Look for real defects, missing tests the plan promised, scope creep, secrets, and anything that would embarrass the team in production. Do not nitpick style the repository's lint does not enforce.",
+    "You can only look: Read, Grep and Glob, and read-only commands (git log, git diff, git show, git status, ls, cat), one at a time. Running tests, builds or anything else is refused, and not needed: the factory ran the project's verification on this exact code just before you, with the result below.",
     "Answer with the JSON object the schema asks for. Approve when the change is correct and safe; request changes only for things that must change before merge.",
+    verified ? `\n## The factory's verification\n${verified.summary}.${verified.output.trim() ? `\n\`\`\`\n${verified.output.trim().slice(-3000)}\n\`\`\`` : ""}` : "",
     "",
     "## Request",
     item.body || item.title,

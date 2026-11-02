@@ -3,6 +3,7 @@
 // the concurrency limits; everything else is driven by what comes back: a run finishing, a
 // person approving, a reviewer asking for changes, a requester answering a question.
 import fs from "node:fs";
+import path from "node:path";
 import { q, one } from "../db.ts";
 import { emit, log } from "./events.ts";
 import { ACTIVE, ItemClosed, addCost, addFeedback, bumpRounds, claim, decideApproval, feedbackFor, getItem, lastRun, markHandled, mustItem, pendingApproval, requestApproval, saveBranch, savePlan, setStatus, unhandledFeedback, type Approval, type Feedback, type Item, type Run } from "./items.ts";
@@ -11,6 +12,8 @@ import { baseRef, branchName, commitLog, createWorktree, diff, githubRepo, hasRe
 import { git, run, shell, tail } from "./exec.ts";
 import { getRunner, type RunEvent, type RunResult, type RunSpec } from "./runners/index.ts";
 import { DEFAULT_MODEL, SMALL_MODEL } from "./runners/claude.ts";
+import { expandHome } from "./discover.ts";
+import { refusalSummary, toolSummary } from "./tools.ts";
 import { buildPrompt, fixPrompt, houseRules, notePrompt, planPrompt, prBody, reviewPrompt, NOTE_SCHEMA, PLAN_SCHEMA, REVIEW_SCHEMA, type Plan } from "./prompts.ts";
 import { itemLink, postStatus } from "./conversations.ts";
 import { settings } from "./settings.ts";
@@ -21,6 +24,10 @@ type Slot = { runId: number | null; kind: string; ctrl: AbortController; started
 
 const active = new Map<number, Slot>();
 const LOOP_LIMIT = 4;
+
+/** What a project lets its working agents reach past the worktree: folders to read, MCP servers. */
+const access = (p: Project): Pick<RunSpec, "readDirs" | "mcp"> => ({ readDirs: p.tools.dirs.map((d) => path.resolve(expandHome(d))), mcp: p.tools.mcp });
+
 const pending: Array<{ itemId: number; projectId: number; fn: () => Promise<void> }> = [];
 let ticking = false;
 class Cancelled extends Error { constructor() { super("cancelled"); } }
@@ -148,15 +155,6 @@ async function fail(itemId: number, err: unknown): Promise<void> {
 
 // --- running an agent ---------------------------------------------------------
 
-function toolSummary(name: string, input: unknown): string {
-  const i = (input ?? {}) as Record<string, unknown>;
-  if (name === "Bash") return String(i.command ?? "").slice(0, 400);
-  if (["Read", "Edit", "Write", "MultiEdit", "NotebookEdit"].includes(name)) return String(i.file_path ?? i.notebook_path ?? "");
-  if (name === "Grep" || name === "Glob") return String(i.pattern ?? "");
-  if (name === "WebFetch" || name === "WebSearch") return String(i.url ?? i.query ?? "");
-  if (name === "Agent" || name === "Task") return String(i.description ?? i.prompt ?? "").slice(0, 200);
-  return JSON.stringify(i).slice(0, 300);
-}
 
 async function startRun(item: Item, p: Project, kind: RunKind, spec: RunSpec, opts: { small?: boolean } = {}): Promise<{ run: Run; result: RunResult }> {
   // The whole job, fix rounds included, may cost at most twice one run's budget; past that a person decides.
@@ -187,11 +185,13 @@ async function startRun(item: Item, p: Project, kind: RunKind, spec: RunSpec, op
   const onSlotAbort = () => ctrl.abort();
   if (slot.ctrl.signal.aborted) ctrl.abort(); else slot.ctrl.signal.addEventListener("abort", onSlotAbort, { once: true });
   let lastCall = "", repeats = 0, looped = false;
+  const calls = new Map<string, string>(); // tool-use id -> what it asked for, to name a refused one
   const onEvent = (e: RunEvent) => {
     if (e.type === "init") { q("update runs set session_id = $2 where id = $1", [run.id, e.sessionId]).catch(() => {}); write({ type: "log", level: "debug", message: `session ${e.sessionId}${e.model ? ` on ${e.model}` : ""}`, actor: "factory" }); }
     else if (e.type === "text") write({ type: "text", message: e.text.slice(0, 20000) });
     else if (e.type === "tool_use") {
       write({ type: "tool", message: `${e.name}: ${toolSummary(e.name, e.input)}`, data: { name: e.name, id: e.id, input: JSON.stringify(e.input ?? {}).slice(0, 6000) } });
+      if (e.id) calls.set(e.id, toolSummary(e.name, e.input).split("\n")[0].slice(0, 200));
       // The same call four times in a row is a loop, not progress: stop it before it burns the budget.
       const key = `${e.name}:${JSON.stringify(e.input ?? {})}`;
       repeats = key === lastCall ? repeats + 1 : 1;
@@ -200,7 +200,8 @@ async function startRun(item: Item, p: Project, kind: RunKind, spec: RunSpec, op
     }
     else if (e.type === "tool_result") write({ type: "tool_result", level: e.isError ? "warn" : "debug", message: e.output.slice(0, 3000), data: { id: e.id, isError: Boolean(e.isError) } });
     else if (e.type === "log") write({ type: "log", level: e.level, message: e.message, actor: "factory" });
-    else if (e.type === "denied") write({ type: "log", level: "warn", message: `permission denied: ${e.tool}${e.message ? ` — ${e.message}` : ""}` });
+    // The CLI's own wording is a paragraph addressed to the agent; the summary at the end says what to change.
+    else if (e.type === "denied") write({ type: "log", level: "info", message: `refused: ${e.tool}${e.id && calls.get(e.id) ? ` ${calls.get(e.id)}` : ""}`, data: { reason: e.message?.slice(0, 2000) } });
     else if (e.type === "usage") recordUsage(runner.id, e);
   };
   let result: RunResult;
@@ -220,6 +221,8 @@ async function startRun(item: Item, p: Project, kind: RunKind, spec: RunSpec, op
     [run.id, status, result.sessionId ?? null, (result.result ?? "").slice(0, 100000), result.structured === undefined ? null : JSON.stringify(result.structured), result.costUsd ?? null, result.turns ?? null, JSON.stringify({ ...(result.usage as object ?? {}), denials: result.denials ?? [], stderr: result.stderr?.slice(-2000) }), result.exitCode, result.error ?? null],
   );
   await addCost(item.id, result.costUsd, result.turns);
+  const refused = refusalSummary(result.denials ?? [], spec.tools?.mode);
+  if (refused) await emit({ itemId: item.id, runId: run.id, type: "log", level: "warn", actor: "factory", message: refused, data: { denials: result.denials } });
   await emit({ itemId: item.id, runId: run.id, type: "run", level: result.ok ? "info" : "warn", message: `${kind} run ${status}${result.turns ? ` after ${result.turns} turns` : ""}${result.costUsd != null ? ` ($${result.costUsd.toFixed(2)} api-equivalent)` : ""}${result.error ? `: ${result.error}` : ""}`, data: { runId: run.id, kind, status, costUsd: result.costUsd, turns: result.turns, durationMs: result.durationMs, denials: result.denials?.length ?? 0 } });
   if (result.error === "cancelled") throw new Cancelled();
   return { run: { ...run, session_id: result.sessionId ?? run.session_id, result: result.result ?? null, structured: result.structured }, result };
@@ -253,7 +256,7 @@ async function plan(item: Item, p: Project): Promise<void> {
     const prompt = resume
       ? `The requester answered:\n${fmtFeedback(unhandled)}\n\nUpdate the plan with that and answer again with the JSON object the schema asks for.`
       : planPrompt(forPrompt(item), p, notes, all.map((f) => ({ author: f.author, body: f.body })));
-    const { result } = await startRun(item, p, "plan", { cwd: item.worktree!, prompt, systemPrompt: houseRules(p), schema: PLAN_SCHEMA, tools: { mode: "readonly", allow: p.tools.allow, deny: p.tools.deny }, env: p.env, maxTurns: 60, maxBudgetUsd: Math.min(p.limits.maxBudgetUsd, 3), timeoutMs: 25 * 60 * 1000, resumeSessionId: resume });
+    const { result } = await startRun(item, p, "plan", { cwd: item.worktree!, prompt, systemPrompt: houseRules(p, "readonly"), schema: PLAN_SCHEMA, tools: { mode: "readonly", allow: p.tools.allow, deny: p.tools.deny }, ...access(p), env: p.env, maxTurns: 60, maxBudgetUsd: Math.min(p.limits.maxBudgetUsd, 3), timeoutMs: 25 * 60 * 1000, resumeSessionId: resume });
     stillWanted(item.id);
     await markHandled(unhandled.map((f) => f.id));
     const plan = result.structured as Plan | undefined;
@@ -291,7 +294,7 @@ async function build(item: Item, p: Project): Promise<void> {
     const notes = (await notesFor(p.id)).map((n) => n.body);
     const fb = await feedbackFor(item.id);
     const prompt = buildPrompt(forPrompt(item), p, notes, fb.map((f) => ({ author: f.author, body: f.body })));
-    const { result } = await startRun(item, p, "build", { cwd: item.worktree!, prompt, systemPrompt: houseRules(p), tools: p.tools, env: p.env, maxTurns: p.limits.maxTurns, maxBudgetUsd: p.limits.maxBudgetUsd, timeoutMs: p.limits.maxMinutes * 60 * 1000 });
+    const { result } = await startRun(item, p, "build", { cwd: item.worktree!, prompt, systemPrompt: houseRules(p), tools: p.tools, ...access(p), env: p.env, maxTurns: p.limits.maxTurns, maxBudgetUsd: p.limits.maxBudgetUsd, timeoutMs: p.limits.maxMinutes * 60 * 1000 });
     await markHandled(fb.filter((f) => !f.handled_at).map((f) => f.id));
     stillWanted(item.id);
     const s = await settle(item.worktree!, item.base_sha!, `#${item.id} ${item.title}`);
@@ -331,7 +334,7 @@ async function fixRun(item: Item, p: Project, reason: "verify" | "review" | "fee
   const base = resume ? "" : `${buildPrompt(forPrompt(item), p, [], [])}\n\n---\n\n`;
   const prompt = `${base}${fixPrompt(forPrompt(item), reason, detail)}`;
   const before = item.head_sha ?? item.base_sha!;
-  const { result } = await startRun(item, p, "fix", { cwd: item.worktree!, prompt, systemPrompt: houseRules(p), tools: p.tools, env: p.env, maxTurns: Math.max(30, Math.round(p.limits.maxTurns / 2)), maxBudgetUsd: Math.max(1, p.limits.maxBudgetUsd / 2), timeoutMs: p.limits.maxMinutes * 60 * 1000, resumeSessionId: resume });
+  const { result } = await startRun(item, p, "fix", { cwd: item.worktree!, prompt, systemPrompt: houseRules(p), tools: p.tools, ...access(p), env: p.env, maxTurns: Math.max(30, Math.round(p.limits.maxTurns / 2)), maxBudgetUsd: Math.max(1, p.limits.maxBudgetUsd / 2), timeoutMs: p.limits.maxMinutes * 60 * 1000, resumeSessionId: resume });
   const s = await settle(item.worktree!, item.base_sha!, `#${item.id} follow-up: ${reason}`);
   await saveBranch(item.id, { headSha: s.headSha });
   const newCommits = s.headSha === before ? 0 : Number((await git(["rev-list", "--count", `${before}..HEAD`], item.worktree!).catch(() => "0")) || 0);
@@ -364,7 +367,7 @@ async function verifyReviewDeliver(item: Item, p: Project, finalMessage: string)
     if (p.gates.review === "ai" && !reviewed) {
       reviewed = true;
       item = await setStatus(item.id, "reviewing", { message: "a second agent is reviewing the diff" });
-      const rv = await aiReview(item, p, message);
+      const rv = await aiReview(item, p, message, v);
       const serious = rv?.findings?.filter((f) => f.severity === "blocker" || f.severity === "major") ?? [];
       concerns = !rv || (rv.verdict === "request_changes" && serious.length > 0);
       if (rv?.verdict === "request_changes" && serious.length) {
@@ -387,9 +390,9 @@ async function verifyReviewDeliver(item: Item, p: Project, finalMessage: string)
   await deliver((await getItem(item.id))!, p, message, verifySummary, { reviewConcerns: concerns });
 }
 
-async function aiReview(item: Item, p: Project, finalMessage: string): Promise<{ verdict: string; summary: string; findings: Array<{ severity: string; file: string; line?: number; message: string }> } | null> {
+async function aiReview(item: Item, p: Project, finalMessage: string, verified: { summary: string; output: string }): Promise<{ verdict: string; summary: string; findings: Array<{ severity: string; file: string; line?: number; message: string }> } | null> {
   const d = await diff(item.worktree!, item.base_sha!, 150_000);
-  const prompt = reviewPrompt(forPrompt(item), p, d.truncated ? `${d.patch}\n… (diff truncated)` : d.patch, finalMessage);
+  const prompt = reviewPrompt(forPrompt(item), p, d.truncated ? `${d.patch}\n… (diff truncated)` : d.patch, finalMessage, verified);
   try {
     const { result } = await startRun(item, p, "review", { cwd: item.worktree!, prompt, schema: REVIEW_SCHEMA, tools: { mode: "readonly" }, maxTurns: 30, maxBudgetUsd: Math.min(p.limits.maxBudgetUsd, 2), timeoutMs: 15 * 60 * 1000 }, { small: true });
     const rv = result.structured as { verdict: string; summary: string; findings: Array<{ severity: string; file: string; line?: number; message: string }> } | undefined;

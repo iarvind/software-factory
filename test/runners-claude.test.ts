@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ALWAYS_DENY, DEFAULT_MODEL, EDIT_ALLOW, READONLY_ALLOW, buildArgs, parseLine } from "../server/lib/runners/claude.ts";
+import { ALWAYS_DENY, DEFAULT_DENY, DEFAULT_MODEL, EDIT_ALLOW, NEVER_DENY, READONLY_ALLOW, buildArgs, denyFor, parseLine } from "../server/lib/runners/claude.ts";
+import { refusalSummary } from "../server/lib/tools.ts";
+import { houseRules, reviewPrompt } from "../server/lib/prompts.ts";
 import type { RunEvent, RunSpec } from "../server/lib/runners/index.ts";
 
 /** The values after a flag, up to the next flag. */
@@ -33,7 +35,8 @@ test("buildArgs: readonly is dontAsk with the read-only allow list and edits den
   const a = buildArgs({ ...base, tools: { mode: "readonly", allow: ["Bash(make lint:*)"], deny: ["Bash(git log:*)"] } });
   assert.deepEqual(after(a, "--permission-mode"), ["dontAsk"]);
   assert.deepEqual(after(a, "--permission-prompts"), ["none"]);
-  assert.deepEqual(after(a, "--tools"), ["Read,Grep,Glob,Bash,WebFetch,WebSearch"]);
+  assert.deepEqual(after(a, "--tools"), ["Read,Grep,Glob,Bash"], "no web tools unless the project allows them");
+  assert.deepEqual(after(buildArgs({ ...base, tools: { mode: "readonly", allow: ["WebFetch(domain:docs.example.com)"] } }), "--tools"), ["Read,Grep,Glob,Bash,WebFetch"]);
   const allowed = after(a, "--allowedTools");
   for (const r of READONLY_ALLOW) assert.ok(allowed.includes(r), r);
   assert.ok(allowed.includes("Bash(make lint:*)"));
@@ -73,7 +76,7 @@ test("buildArgs: resume, a pinned session id, or a fresh one", () => {
 
 test("buildArgs: limits, schema, model, prompt and directories pass through", () => {
   const schema = { title: "plan", type: "object" };
-  const a = buildArgs({ ...base, model: "claude-x", fallbackModel: "claude-y", effort: "high", maxTurns: 7, maxBudgetUsd: 1.5, schema, systemPrompt: "rules", addDirs: ["/a", "/b"], mcpConfig: '{"mcpServers":{}}' });
+  const a = buildArgs({ ...base, model: "claude-x", fallbackModel: "claude-y", effort: "high", maxTurns: 7, maxBudgetUsd: 1.5, schema, systemPrompt: "rules", addDirs: ["/a", "/b"] });
   assert.deepEqual(after(a, "--model"), ["claude-x"]);
   assert.deepEqual(after(a, "--fallback-model"), ["claude-y"]);
   assert.deepEqual(after(a, "--effort"), ["high"]);
@@ -82,7 +85,67 @@ test("buildArgs: limits, schema, model, prompt and directories pass through", ()
   assert.deepEqual(JSON.parse(after(a, "--json-schema")[0]), schema);
   assert.deepEqual(after(a, "--append-system-prompt"), ["rules"]);
   assert.deepEqual(a.filter((_, i) => a[i - 1] === "--add-dir"), ["/a", "/b"]);
-  assert.deepEqual(after(a, "--mcp-config"), ['{"mcpServers":{}}']);
+  assert.ok(!a.includes("--mcp-config"), "no MCP servers, no config");
+});
+
+test("buildArgs: a project's folders become read rules, its MCP servers an inline config, both allowed", () => {
+  const mcp = { grafana: { command: "mcp-grafana", env: { GRAFANA_API_KEY: "${GRAFANA_API_KEY}" } } };
+  for (const mode of ["readonly", "edit"] as const) {
+    const a = buildArgs({ ...base, tools: { mode }, readDirs: ["/Users/me/shared/"], mcp });
+    const allowed = after(a, "--allowedTools");
+    assert.ok(allowed.includes("Read(//Users/me/shared/**)"), "read, not edit, and // marks an absolute path");
+    assert.ok(allowed.includes("mcp__grafana"));
+    assert.deepEqual(JSON.parse(after(a, "--mcp-config")[0]), { mcpServers: mcp }, "the ${NAME} reference is left for the CLI to fill in");
+    assert.ok(!allowed.some((r) => r.startsWith("Edit(")));
+  }
+});
+
+test("denyFor: a project lifts a default deny by naming the command, never the hard ones", () => {
+  assert.deepEqual(denyFor([], []), ALWAYS_DENY);
+  const d = denyFor(["Bash(kubectl get:*)", "Bash(curl:*)", "Bash(git push:*)", "Bash(sudo:*)"], ["Bash(terraform:*)"]);
+  assert.ok(!d.includes("Bash(kubectl:*)") && !d.includes("Bash(curl:*)"));
+  for (const r of NEVER_DENY) assert.ok(d.includes(r), r);
+  for (const r of DEFAULT_DENY.filter((x) => !["Bash(kubectl:*)", "Bash(curl:*)"].includes(x))) assert.ok(d.includes(r), r);
+  assert.ok(d.includes("Bash(terraform:*)"));
+});
+
+test("refusalSummary: one line per refused action and what would let it through", () => {
+  assert.equal(refusalSummary([]), null);
+  const s = refusalSummary([
+    { tool_name: "Bash", tool_input: { command: "gcloud logging read 'severity>=ERROR'" } },
+    { tool_name: "Bash", tool_input: { command: "gcloud logging read 'severity>=ERROR'" } },
+    { tool_name: "Bash", tool_input: { command: "CLOUDSDK_CORE_PROJECT=x /opt/homebrew/bin/logcli query '{app=\"web\"}'" } },
+    { tool_name: "Bash", tool_input: { command: "git push origin HEAD" } },
+    { tool_name: "Bash", tool_input: { command: "git status && npm test 2>&1 | tail -20" } },
+    { tool_name: "Bash", tool_input: { command: "npm test 2>&1" } },
+    { tool_name: "Grep", tool_input: { pattern: "roots", path: "/elsewhere" } },
+  ], "readonly")!;
+  const lines = s.split("\n");
+  assert.match(lines[0], /^6 action\(s\) were refused/, "the same call twice is one line");
+  assert.match(s, /gcloud logging read .*add Bash\(gcloud:\*\) under Tools, Also allow/);
+  assert.match(s, /logcli query .*add Bash\(logcli:\*\)/, "past an env prefix and a full path");
+  assert.match(s, /git push origin HEAD \(never allowed/);
+  assert.match(s, /git status && .*\(a chained command/);
+  assert.match(s, /- Bash npm test 2>&1 \(this run only looks/, "2>&1 is not a background &");
+  assert.match(s, /Grep roots \(outside the worktree\? add the folder/);
+});
+
+test("prompts: the tool rules and what the project allows; the reviewer gets the verification", () => {
+  const p = { name: "Web", slug: "web", default_branch: "main", test_command: "npm test", build_command: null, instructions: null, delivery: "pr",
+    tools: { mode: "edit", allow: ["Bash(gcloud:*)"], dirs: ["~/shared"], mcp: { grafana: {} } } };
+  const rules = houseRules(p);
+  assert.match(rules, /A refused action stays refused/);
+  assert.match(rules, /Run one plain command at a time/);
+  assert.match(rules, /`Bash\(gcloud:\*\)`/);
+  assert.match(rules, /Folders you may read \(not change\) outside the worktree: ~\/shared/);
+  assert.match(rules, /MCP servers: grafana/);
+  assert.match(houseRules(p, "readonly"), /This run only looks/);
+  assert.doesNotMatch(houseRules({ ...p, tools: { ...p.tools, mode: "full" } }), /allow-list/);
+  assert.doesNotMatch(houseRules({ ...p, tools: undefined }), /Also allowed in this project/);
+  const item = { id: 7, title: "t", body: "b", kind: null, priority: 3, labels: [], requester_name: null, external_url: null, plan: null };
+  const r = reviewPrompt(item, p, "diff", "done", { summary: "`npm test` passed", output: "$ npm test\n✔ 12 tests" });
+  assert.match(r, /Running tests, builds or anything else is refused/);
+  assert.match(r, /## The factory's verification\n`npm test` passed\.\n```\n\$ npm test\n✔ 12 tests\n```/);
 });
 
 function feed(lines: unknown[]) {
@@ -135,7 +198,7 @@ test("parseLine: permission_denied becomes denied; api_retry a warning", () => {
     { type: "system", subtype: "api_retry", attempt: 2, max_retries: 10, retry_delay_ms: 2000, error_status: 529, error: "overloaded" },
     { type: "system", subtype: "status", status: "requesting" },
   ]);
-  assert.deepEqual(events[0], { type: "denied", tool: "Bash", message: "matched Bash(git push:*)" });
+  assert.deepEqual(events[0], { type: "denied", tool: "Bash", id: "toolu_9", message: "matched Bash(git push:*)" });
   assert.deepEqual(events[1], { type: "log", level: "warn", message: "API retry 2/10: overloaded 529" });
   assert.equal(events.length, 2);
 });

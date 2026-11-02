@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { invalidate, patch, post, useApi } from "../lib/api";
 import { splitLines } from "../lib/format";
 import { useMe } from "../lib/session";
-import type { Gates, Limits, Project, ProjectDefaults } from "../lib/types";
+import type { Gates, Limits, McpServer, Project, ProjectDefaults } from "../lib/types";
 import { Button, Empty, ErrorNote, Field, Input, Loading, Page, Segmented, Select, Textarea, Toggle, toast } from "../components/ui";
 
 export const GATE_HELP: Record<keyof Gates, Record<string, string>> = {
@@ -38,6 +38,10 @@ type Form = {
   slug: string; name: string; description: string; where: "repo" | "local"; repo_url: string; local_path: string; default_branch: string;
   runner: string; model: string; effort: string; setup_command: string; test_command: string; build_command: string; deploy_command: string; health_url: string;
   delivery: "pr" | "local"; gates: Gates; limits: Record<keyof Limits, string>; mode: "readonly" | "edit" | "full"; allow: string; deny: string;
+  /** One folder per line. */
+  dirs: string;
+  /** The mcpServers object as JSON text; empty for none. */
+  mcp: string;
   env: EnvRow[]; instructions: string; paused: boolean;
 };
 
@@ -48,6 +52,7 @@ function fromProject(p: Project): Form {
     slug: p.slug, name: p.name, description: p.description ?? "", where: p.local_path ? "local" : "repo", repo_url: p.repo_url ?? "", local_path: p.local_path ?? "", default_branch: p.default_branch,
     runner: p.runner ?? "", model: p.model ?? "", effort: p.effort ?? "", setup_command: p.setup_command ?? "", test_command: p.test_command ?? "", build_command: p.build_command ?? "", deploy_command: p.deploy_command ?? "", health_url: p.health_url ?? "",
     delivery: p.delivery, gates: { ...p.gates }, limits: Object.fromEntries(LIMITS.map((l) => [l.key, String(p.limits[l.key] ?? l.def ?? "")])) as Form["limits"], mode: p.tools.mode, allow: p.tools.allow.join("\n"), deny: p.tools.deny.join("\n"),
+    dirs: (p.tools.dirs ?? []).join("\n"), mcp: mcpText(p.tools.mcp),
     env: p.env.map((k) => ({ key: k, value: "", existing: true, remove: false })), instructions: p.instructions ?? "", paused: p.paused,
   };
 }
@@ -55,15 +60,27 @@ function fresh(d: ProjectDefaults): Form {
   return {
     slug: "", name: "", description: "", where: "local", repo_url: "", local_path: "", default_branch: "main", runner: "", model: "", effort: "",
     setup_command: "", test_command: "", build_command: "", deploy_command: "", health_url: "", delivery: "local", gates: { ...d.gates },
-    limits: Object.fromEntries(LIMITS.map((l) => [l.key, String(d.limits[l.key] ?? l.def ?? "")])) as Form["limits"], mode: d.tools.mode, allow: d.tools.allow.join("\n"), deny: d.tools.deny.join("\n"),
+    limits: Object.fromEntries(LIMITS.map((l) => [l.key, String(d.limits[l.key] ?? l.def ?? "")])) as Form["limits"], mode: d.tools.mode, allow: d.tools.allow.join("\n"), deny: d.tools.deny.join("\n"), dirs: "", mcp: "",
     env: [], instructions: "", paused: false,
   };
 }
 const orNull = (s: string) => (s.trim() ? s.trim() : null);
+const mcpText = (m: Record<string, McpServer> | undefined) => (m && Object.keys(m).length ? JSON.stringify(m, null, 2) : "");
+/** The MCP box as an object, or why it is not one. Accepts the whole {"mcpServers": {…}} file as well as its inside. */
+function parseMcp(text: string): { value: Record<string, McpServer> } | { error: string } {
+  if (!text.trim()) return { value: {} };
+  try {
+    const v = JSON.parse(text) as unknown;
+    const servers = v && typeof v === "object" && "mcpServers" in v ? (v as { mcpServers: unknown }).mcpServers : v;
+    if (!servers || typeof servers !== "object" || Array.isArray(servers)) return { error: "MCP servers must be a JSON object of servers by name" };
+    return { value: servers as Record<string, McpServer> };
+  } catch (e) { return { error: `MCP servers: ${e instanceof Error ? e.message : "not valid JSON"}` }; }
+}
 // What a member may change on a project; everything else is an admin's (MEMBER_FIELDS in server/routes/projects.ts).
 const MEMBER_FIELDS = ["name", "description", "instructions", "model", "effort", "paused"] as const;
 
 function payload(f: Form, editing: boolean) {
+  const mcp = parseMcp(f.mcp);
   const env: Record<string, string> = {};
   for (const r of f.env) {
     const k = r.key.trim();
@@ -78,7 +95,7 @@ function payload(f: Form, editing: boolean) {
     setup_command: orNull(f.setup_command), test_command: orNull(f.test_command), build_command: orNull(f.build_command), deploy_command: orNull(f.deploy_command), health_url: orNull(f.health_url),
     // An empty box means "leave it as it is" (the default, for a new project), not 0.
     delivery: f.delivery, gates: f.gates, limits: Object.fromEntries(LIMITS.filter((l) => f.limits[l.key].trim() !== "").map((l) => [l.key, Number(f.limits[l.key])])),
-    tools: { mode: f.mode, allow: splitLines(f.allow), deny: splitLines(f.deny) }, env, instructions: orNull(f.instructions), paused: f.paused,
+    tools: { mode: f.mode, allow: splitLines(f.allow), deny: splitLines(f.deny), dirs: splitLines(f.dirs), mcp: "value" in mcp ? mcp.value : {} }, env, instructions: orNull(f.instructions), paused: f.paused,
   };
 }
 
@@ -104,7 +121,9 @@ export default function ProjectEdit() {
   const text = (k: keyof Form) => ({ value: String(f[k] ?? ""), onChange: (e: { target: { value: string } }) => set(k, e.target.value as never) });
   const slugOk = /^[a-z0-9][a-z0-9-]{0,62}$/.test(f.slug);
   const whereOk = f.where === "repo" ? Boolean(f.repo_url.trim()) : Boolean(f.local_path.trim());
-  const ok = Boolean(f.name.trim()) && slugOk && whereOk;
+  const mcpParsed = parseMcp(f.mcp);
+  const mcpError = "error" in mcpParsed ? mcpParsed.error : null;
+  const ok = Boolean(f.name.trim()) && slugOk && whereOk && !mcpError;
   // A member edits only the words, the model and the pause; the server refuses the rest.
   const locked = !me.isAdmin;
 
@@ -213,6 +232,15 @@ export default function ProjectEdit() {
             <Field label="Also allow" hint="One per line, in the runner's syntax, e.g. Bash(npm run lint:*)"><Textarea rows={4} {...text("allow")} className="mono-input" /></Field>
             <Field label="Always deny" hint="One per line; wins over everything else."><Textarea rows={4} {...text("deny")} className="mono-input" /></Field>
           </div>
+          <p className="quiet">Allowing a command lifts the factory's own block on it, e.g. Bash(kubectl get:*) or Bash(curl:*). Pushing, git config, sudo and shell wrappers stay blocked.</p>
+          <Field label="Folders the agent may read" hint="One full path per line. Outside the worktree, read only: another repository, a shared library, generated docs.">
+            <Textarea rows={2} {...text("dirs")} className="mono-input" placeholder="~/Self/shared-lib" />
+          </Field>
+          <Field label="MCP servers" hint={<>JSON, the same shape as an .mcp.json file. Put keys under Environment below and write them here as <span className="mono">{"${NAME}"}</span>; other values are hidden once saved. Claude runner only.</>}>
+            <Textarea rows={6} {...text("mcp")} className="mono-input" aria-invalid={Boolean(mcpError)} spellCheck={false}
+              placeholder={'{\n  "grafana": {\n    "command": "mcp-grafana",\n    "env": { "GRAFANA_URL": "https://grafana.example.com", "GRAFANA_API_KEY": "${GRAFANA_API_KEY}" }\n  }\n}'} />
+          </Field>
+          {mcpError && <p className="error" role="alert">{mcpError}</p>}
         </FormCard>
 
         <FormCard title="Environment" disabled={locked} hint="Variables for the commands and the agent. Saved values are never shown again; type a new value to replace one.">

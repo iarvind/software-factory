@@ -50,7 +50,7 @@ export default function ProjectPage() {
           ["Default branch", <span className="mono">{p.default_branch}</span>],
           ["Delivery", p.delivery === "pr" ? "Pull requests" : "Merged locally"],
           ["Runner", <>{p.runner ?? "default"}{p.model ? `, ${p.model}` : ""}{p.effort ? `, effort ${p.effort}` : ""}</>],
-          ["Tools", <>{p.tools.mode}{p.tools.allow.length ? `, ${p.tools.allow.length} allowed` : ""}{p.tools.deny.length ? `, ${p.tools.deny.length} denied` : ""}</>],
+          ["Tools", <>{p.tools.mode}{p.tools.allow.length ? `, ${p.tools.allow.length} allowed` : ""}{p.tools.deny.length ? `, ${p.tools.deny.length} denied` : ""}{p.tools.dirs?.length ? `, ${p.tools.dirs.length} folder${p.tools.dirs.length === 1 ? "" : "s"} to read` : ""}{Object.keys(p.tools.mcp ?? {}).length ? `, MCP: ${Object.keys(p.tools.mcp).join(", ")}` : ""}</>],
           ["Test", p.test_command ? <span className="mono">{p.test_command}</span> : <span className="quiet">none</span>],
           ["Build", p.build_command ? <span className="mono">{p.build_command}</span> : <span className="quiet">none</span>],
           ["Deploy", p.deploy_command ? <span className="mono">{p.deploy_command}</span> : <span className="quiet">none</span>],

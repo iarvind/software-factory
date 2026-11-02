@@ -15,7 +15,7 @@
 //   edit     → auto_edit (file edits approved) plus claude.ts's toolchain shell commands.
 //   full     → yolo.
 // Allowed commands go in as --allowed-tools run_shell_command(<prefix>); anything else that needs
-// a confirmation is denied, never asked. ALWAYS_DENY and the project's deny list become deny rules
+// a confirmation is denied, never asked. denyFor() (the defaults and the project's deny list) becomes deny rules
 // in a policy file (--policy: user tier, priority above everything the flags allow, yolo included).
 // Allow and deny entries are written the claude way (`Bash(git log:*)`, `Read`) and translated.
 // There is no schema flag and no system-prompt flag: the house rules lead the first prompt and a
@@ -28,7 +28,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { childEnv, registerRunner, type AgentRunner, type RunEvent, type RunResult, type RunSpec } from "./index.ts";
-import { ALWAYS_DENY, EDIT_ALLOW, READONLY_ALLOW } from "./claude.ts";
+import { EDIT_ALLOW, READONLY_ALLOW, denyFor } from "./claude.ts";
 import { clip, extractJson, schemaInstruction, spawnCli } from "./util.ts";
 
 const BIN = process.env.GEMINI_BIN || "gemini";
@@ -139,7 +139,7 @@ export const geminiRunner: AgentRunner = {
   async run(spec, onEvent, signal): Promise<RunResult> {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "factory-gemini-"));
     const policyFile = path.join(tmp, "deny.toml");
-    fs.writeFileSync(policyFile, denyPolicy([...ALWAYS_DENY, ...(spec.tools?.deny ?? [])]));
+    fs.writeFileSync(policyFile, denyPolicy(denyFor(spec.tools?.allow ?? [], spec.tools?.deny ?? [])));
     const state = newState(spec);
     try {
       const x = await spawnCli({

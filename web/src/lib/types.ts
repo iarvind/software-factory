@@ -51,7 +51,9 @@ export type Gates = { plan: GatePolicy; merge: GatePolicy; deploy: "manual" | "a
 export type Limits = { maxTurns: number; maxBudgetUsd: number; maxMinutes: number; maxFixRounds: number; concurrency: number; verifyMinutes: number; maxInReview: number;
   /** Minutes to watch health_url after a deploy; two failed checks block the item. */
   observeMinutes: number };
-export type Tools = { mode: "readonly" | "edit" | "full"; allow: string[]; deny: string[] };
+/** One MCP server as the CLI takes it; env and header values come back hidden unless they are a ${NAME} reference. */
+export type McpServer = { type?: "stdio" | "http" | "sse"; command?: string; args?: string[]; env?: Record<string, string>; url?: string; headers?: Record<string, string> };
+export type Tools = { mode: "readonly" | "edit" | "full"; allow: string[]; deny: string[]; dirs: string[]; mcp: Record<string, McpServer> };
 
 export type ItemDetail = {
   item: Item; runs: Run[]; approvals: Approval[]; feedback: Feedback[]; posts: Post[];
