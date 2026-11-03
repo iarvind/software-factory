@@ -235,7 +235,7 @@ export default function ProjectEdit() {
           </div>
           <p className="quiet">Allowing a command lifts the factory's own block on it, e.g. Bash(kubectl get:*) or Bash(curl:*). Pushing, git config, sudo and shell wrappers stay blocked.</p>
           <Field label="Folders the agent may read" hint="One full path per line. Outside the worktree, read only: another repository, a shared library, generated docs.">
-            <Textarea rows={2} {...text("dirs")} className="mono-input" placeholder="~/Self/shared-lib" />
+            <Textarea rows={2} {...text("dirs")} className="mono-input" placeholder="~/code/shared-lib" />
           </Field>
           <Field label="MCP servers" hint={<>JSON, the same shape as an .mcp.json file. Claude runner only. Keys can go right here: once saved they are hidden, and they reach the MCP server, not the agent's shell. <span className="mono">{"${NAME}"}</span> takes a value from Environment below, which the agent's shell sees too.</>}>
             <Textarea rows={6} {...text("mcp")} className="mono-input" aria-invalid={Boolean(mcpError)} spellCheck={false}

@@ -1,11 +1,12 @@
 // Shared pieces for the README recordings: a headless Chrome at 1280×800, a visible pointer,
 // local paths shortened on screen, a frame-by-frame screencast (CDP) with named marks, and
 // the dev sign-in. encode.cjs turns the frames into a GIF and a full-speed MP4.
-// Uses the Chrome on this Mac through playwright-core (PLAYWRIGHT_CORE, as in ops/shoot.cjs).
+// Uses the Chrome on this Mac through playwright-core (not a dependency: install it anywhere and
+// point PLAYWRIGHT_CORE at it, or have it resolvable from here).
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
-const core = process.env.PLAYWRIGHT_CORE || path.join(process.env.HOME, "Self/musicgen-ai/node_modules/playwright-core");
-const { chromium } = require(core);
+const { chromium } = require(process.env.PLAYWRIGHT_CORE || "playwright-core");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const BASE = process.env.BASE || "http://127.0.0.1:8282";
@@ -15,21 +16,30 @@ const EMAIL = process.env.EMAIL || (fs.existsSync(envFile) ? /^ADMIN_EMAILS=([^\
 const MEDIA = path.join(ROOT, "data", "media");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Runs in every page before its own scripts. The pointer is a DOM element that follows mouse
-// events (headless Chrome draws none); paths under the home directory are shortened so a
-// recording does not show where things live on this machine; scrollbars are hidden.
-const INIT = `(() => {
-  const FACTORY = /\\/Users\\/[^/\\s"']+\\/Self\\/software-factory\\//g;
-  const HOME = /\\/Users\\/[^/\\s"']+/g;
-  const fix = (s) => s.replace(FACTORY, "").replace(HOME, "~");
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const USER = os.userInfo().username;
+/** Makes text safe to show: this checkout's path dropped, the home directory as ~, the login name as "me". */
+const clean = (s) => s.split(ROOT + "/").join("").split(os.homedir()).join("~").replace(new RegExp(`\\b${esc(USER)}\\b`, "g"), "me");
+
+// Runs in every page before its own scripts: the same cleaning on every text node as it appears,
+// so a screenshot or recording does not show where things live on this machine or who runs it.
+const SCRUB = `(() => {
+  const PARTS = ${JSON.stringify([ROOT + "/", os.homedir()])}, USER = new RegExp(${JSON.stringify(`\\b${esc(USER)}\\b`)}, "g");
+  const fix = (s) => s.split(PARTS[0]).join("").split(PARTS[1]).join("~").replace(USER, "me");
+  const dirty = (s) => s.includes(PARTS[1]) || (USER.lastIndex = 0, USER.test(s));
   const scrub = (node) => {
-    if (node.nodeType === 3) { if (node.nodeValue.includes("/Users/")) node.nodeValue = fix(node.nodeValue); return; }
+    if (node.nodeType === 3) { if (dirty(node.nodeValue)) node.nodeValue = fix(node.nodeValue); return; }
     if (node.nodeType !== 1) return;
     const w = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-    for (let t = w.nextNode(); t; t = w.nextNode()) if (t.nodeValue.includes("/Users/")) t.nodeValue = fix(t.nodeValue);
+    for (let t = w.nextNode(); t; t = w.nextNode()) if (dirty(t.nodeValue)) t.nodeValue = fix(t.nodeValue);
   };
   new MutationObserver((ms) => { for (const m of ms) { if (m.type === "characterData") scrub(m.target); else m.addedNodes.forEach(scrub); } })
     .observe(document, { subtree: true, childList: true, characterData: true });
+})();`;
+
+// Also before every page's scripts: a pointer, a DOM element that follows mouse events
+// (headless Chrome draws none), and hidden scrollbars.
+const INIT = SCRUB + `(() => {
   const style = document.createElement("style");
   style.textContent = "html{scrollbar-width:none} ::-webkit-scrollbar{display:none}" +
     "#__ptr{position:fixed;left:0;top:0;width:22px;height:22px;z-index:2147483647;pointer-events:none;transform:translate(-100px,-100px);filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.35))}" +
@@ -145,4 +155,4 @@ async function scrollToEl(page, loc, offset = 80, ms = 700) {
   await scrollTo(page, y - offset, ms);
 }
 
-module.exports = { ROOT, BASE, W, H, EMAIL, MEDIA, sleep, launch, context, login, api, record, pointer, scrollTo, scrollBy, scrollToEl };
+module.exports = { chromium, ROOT, BASE, W, H, EMAIL, MEDIA, SCRUB, clean, sleep, launch, context, login, api, record, pointer, scrollTo, scrollBy, scrollToEl };

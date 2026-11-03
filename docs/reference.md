@@ -64,7 +64,7 @@ factory-wide switches, **Pause the factory** included. Viewers only look.
 ## Projects
 
 A project is a repository plus how to work in it. **Add from this Mac** (admins) lists the git
-checkouts one level under rack's roots (`~/Self`, `~/Self/labs`) that are not projects yet, with
+checkouts one level under rack's roots (say `~/code`, `~/code/labs`) that are not projects yet, with
 the test, build and deploy commands it can read off `package.json`, the `Makefile`, `go.mod` or
 `dashboard.json`. Its suggested setup copies the app's `.env` into each worktree so the tests can
 reach their database — which means the agent can read that file; leave the copy out for apps
@@ -72,7 +72,7 @@ whose secrets it must not see.
 
 | | |
 |---|---|
-| `repo_url` or `local_path` | a URL the factory clones into `data/repos/<slug>`, or a checkout already on this Mac (`~/Self/me`). Jobs always run in worktrees; a local checkout is only touched by the merge. |
+| `repo_url` or `local_path` | a URL the factory clones into `data/repos/<slug>`, or a checkout already on this Mac (`~/code/my-app`). Jobs always run in worktrees; a local checkout is only touched by the merge. |
 | `delivery` | `pr` (push, open a pull request, merge through GitHub) or `local` (review the diff here, merge into the checkout). |
 | `setup_command`, `build_command`, `test_command`, `deploy_command`, `health_url` | run by the factory, not the agent: setup in each new worktree, build and test as the verify gate, deploy after merge. |
 | `gates` | `plan` and `merge`: `manual` · `auto` · `auto_low_risk`; `deploy`: `manual` · `auto` · `off`; `review`: `ai` · `off`. With delivery `local` and an automatic merge gate, a verified (and, with `review: ai`, approved) change merges without waiting for a person; with delivery `pr` the pull request still needs its approval. |

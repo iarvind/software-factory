@@ -8,7 +8,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PLATFORM_DIR=${PLATFORM_DIR:-$HOME/Self/dashboard/platform}
+PLATFORM_DIR=${PLATFORM_DIR:-$(cd .. && pwd)/dashboard/platform}
 PORT=${PORT:-8282}
 DOMAIN="gui/$(id -u)"
 LABEL=com.factory.web

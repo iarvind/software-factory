@@ -2,6 +2,7 @@
   "name": "software-factory",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "A software factory: work arrives from Slack, Jira, GitHub, schedules, service stats or a form; agents plan, build, verify and ship it; everyone sees the status; what is learned feeds the next job.",
   "bin": { "factory": "./cli/factory.ts" },

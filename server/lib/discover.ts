@@ -1,5 +1,5 @@
 // The apps already on this Mac, offered as projects: the git checkouts one level under rack's
-// roots (~/Self/dashboard/services.json), with commands guessed from what each repository has.
+// roots (`roots` in rack's services.json), with commands guessed from what each repository has.
 // A guess is only a starting point; the person adding the project sees and edits every field.
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -11,7 +11,10 @@ export type Suggestions = { test_command: string | null; build_command: string |
 export type Candidate = { path: string; name: string; slug: string; default_branch: string; remote: string | null; github: string | null; suggestions: Suggestions };
 
 const HOME = process.env.HOME || "";
-const SERVICES = path.join(HOME, "Self/dashboard/services.json");
+// The apps live side by side: rack (the local dashboard) and this checkout share a parent folder,
+// unless RACK_SERVICES says where rack's services.json is.
+const APPS = path.resolve(import.meta.dirname, "../../..");
+const SERVICES = process.env.RACK_SERVICES || path.join(APPS, "dashboard/services.json");
 const MAX = 60;
 
 export const expandHome = (p: string) => p.replace(/^~(?=$|\/)/, HOME || "~");
@@ -30,7 +33,7 @@ const real = (p: string) => fs.realpath(p).catch(() => path.resolve(p));
 export async function roots(): Promise<string[]> {
   const s = await readJson<{ roots?: unknown }>(SERVICES);
   const list = Array.isArray(s?.roots) ? s.roots.filter((r): r is string => typeof r === "string" && r.trim() !== "") : [];
-  return (list.length ? list : ["~/Self"]).map((r) => path.resolve(expandHome(r.trim())));
+  return (list.length ? list : [APPS]).map((r) => path.resolve(expandHome(r.trim())));
 }
 
 /** Resolved local paths of the projects already registered, so they are not offered twice. */

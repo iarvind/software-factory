@@ -6,11 +6,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { gitIn, skipIfNoDb, tempDir, useTestDb } from "./helpers.ts";
 
-// discover.ts reads rack's roots from $HOME/Self/dashboard/services.json, with HOME read when it is
+// discover.ts reads rack's roots from RACK_SERVICES and expands ~ with HOME, both read when it is
 // imported: a throwaway HOME stands in for this Mac's, so the roots are ours.
 const realHome = process.env.HOME;
 const HOME = tempDir("factory-home-");
 process.env.HOME = HOME;
+const RACK = path.join(HOME, "rack/services.json");
+process.env.RACK_SERVICES = RACK;
 
 const write = (file: string, text: string) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
 const json = (file: string, v: unknown) => write(file, `${JSON.stringify(v, null, 2)}\n`);
@@ -25,7 +27,7 @@ describe("discover: checkouts under the roots, with suggested commands", { skip:
   before(async () => {
     db = await useTestDb();
     discover = await import("../server/lib/discover.ts");
-    json(path.join(HOME, "Self/dashboard/services.json"), { roots: ["~/apps", "~/not-there"] });
+    json(RACK, { roots: ["~/apps", "~/not-there"] });
     fs.mkdirSync(apps);
 
     // A Node project: test, typecheck and build scripts, a lockfile, a .env and installed node_modules.

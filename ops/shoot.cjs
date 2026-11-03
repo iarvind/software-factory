@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 // Screenshots of every page: desktop light, desktop dark, phone light.
 //   node ops/shoot.cjs <outdir>            (BASE=http://127.0.0.1:8282 by default)
-// Uses the Chrome installed on this Mac through playwright-core, borrowed from
-// musicgen-ai's node_modules unless PLAYWRIGHT_CORE points elsewhere. Signs in with the
-// dev login (DEV_LOGIN=1 on the server) as the first ADMIN_EMAILS address from .env.
+// Uses the Chrome installed on this Mac through playwright-core (see ops/record/lib.cjs), with
+// local paths and the login name cleaned off the pages. Signs in with the dev login
+// (DEV_LOGIN=1 on the server) as the first ADMIN_EMAILS address from .env.
 const fs = require("node:fs");
 const path = require("node:path");
-const core = process.env.PLAYWRIGHT_CORE || path.join(process.env.HOME, "Self/musicgen-ai/node_modules/playwright-core");
-const { chromium } = require(core);
+const { chromium, SCRUB } = require("./record/lib.cjs");
 const out = process.argv[2] || path.join(__dirname, "..", "data", "shots");
 const base = process.env.BASE || "http://127.0.0.1:8282";
 const item = process.env.ITEM || "1";
@@ -25,6 +24,7 @@ fs.mkdirSync(out, { recursive: true });
   const problems = [];
   for (const m of modes) {
     const ctx = await browser.newContext({ viewport: m.viewport, colorScheme: m.colorScheme, isMobile: m.isMobile, deviceScaleFactor: m.deviceScaleFactor ?? 1 });
+    await ctx.addInitScript(SCRUB);
     const page = await ctx.newPage();
     page.on("pageerror", (e) => problems.push(`${m.name}: pageerror ${e.message}`));
     page.on("console", (msg) => { if (msg.type() === "error") problems.push(`${m.name} ${page.url()}: ${msg.text().slice(0, 200)}`); });

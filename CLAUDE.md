@@ -2,12 +2,12 @@
 
 Read `README.md` first; it is accurate. These are the facts that save time.
 
-- App root `~/Self/software-factory`. Server `server/index.ts` runs directly under Node 22.18+ (25 on this Mac; native
+- Server `server/index.ts` runs directly under Node 22.18+ (25 on this Mac; native
   TypeScript, no build; `.ts` import extensions, `verbatimModuleSyntax`, `erasableSyntaxOnly`).
   Client `web/` is Vite + React, built to `web/dist`, served by the same process. Port **8282**,
   binds 127.0.0.1. `npm run typecheck` checks both; `npm test` runs `test/*.test.ts` against the
   `factory_test` database (`.env.test`).
-- Database `factory` in the shared platform Postgres (`~/Self/dashboard/platform`), role `factory`,
+- Database `factory` in the shared platform Postgres (`PLATFORM_DIR`, default `../dashboard/platform`), role `factory`,
   password `DB_PASSWORD_FACTORY` in `platform/.env`; `DATABASE_URL` in `.env` here. Migrations are
   `server/migrations/*.sql`, applied at boot in order; add a new numbered file, never edit an old one.
 - Production is the launchd unit **com.factory.web** (`ops/launchd.sh`), logs in `data/logs/web.log`,
@@ -17,13 +17,13 @@ Read `README.md` first; it is accurate. These are the facts that save time.
   on the subscription login, behind `server/lib/runners/`. Never add the Anthropic SDK. Never use
   `--bare` (it ignores the subscription login). The child environment is an allow-list
   (`childEnv` in `runners/index.ts`).
-- **Sign-in** is Google OIDC (`server/lib/auth.ts`, same pattern and OAuth client as `~/Self/me`);
+- **Sign-in** is Google OIDC (`server/lib/auth.ts`, same pattern and OAuth client as the other apps on this machine);
   roles admin/member/viewer/pending; API tokens `ft_…`. `DEV_LOGIN=1` allows `POST /api/auth/dev`
   locally. The gate is in `server/index.ts`.
 - The pipeline (`server/lib/pipeline.ts`) is the only thing that moves items. `lib/discover.ts` finds local checkouts for "Add from this Mac"; `lib/digest.ts` is the daily word; `lib/alerts.ts` tells admins about new sign-ins; `lib/prwatch.ts` reads pull requests back. Statuses are in
   `items.ts` (`STATUSES`). Add intake as a `SourceAdapter` (`lib/sources/`), agents as an
   `AgentRunner` (`lib/runners/`), status targets as posters (`conversations.ts`).
-- Telegram goes through `~/Self/notifier` (`NOTIFIER_URL`); its button presses come back to
+- Telegram goes through the separate notifier app (`NOTIFIER_URL`); its button presses come back to
   `/api/notifier/hook` (before the session gate, local only, bearer secret in `kv`).
 - Moving items: `setStatus` is guarded (closed items need `force`), `claim()` for merge/deploy, every
   repository operation under `withRepoLock`. A merge conflict starts `reconcile()`; `retry()` resumes

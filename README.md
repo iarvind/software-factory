@@ -150,7 +150,7 @@ by it:
 ## Run it
 
 ```sh
-cp .env.example .env     # DATABASE_URL from ~/Self/dashboard/platform/db.sh url factory; FACTORY_SECRET; Google client; ADMIN_EMAILS
+cp .env.example .env     # DATABASE_URL from the platform's db.sh url factory; FACTORY_SECRET; Google client; ADMIN_EMAILS
 make db                  # the shared platform Postgres and the "factory" database
 npm install
 make deploy              # typecheck, build the UI, (re)start on http://127.0.0.1:8282
@@ -169,11 +169,11 @@ the tests (end-to-end against `factory_test` with a fake runner; no model is cal
 
 **On another machine.** The commands above assume the Mac this was built on. `make db` and
 `make deploy` start Postgres from a shared Docker Compose file and create the database with its
-`db.sh`, both in `PLATFORM_DIR` (default `~/Self/dashboard/platform`). `make deploy` then restarts
+`db.sh`, both in `PLATFORM_DIR` (default `../dashboard/platform`, next to this checkout). `make deploy` then restarts
 the server through launchd (`launchctl`) if the unit is installed, and otherwise as a background
 process. `make launchd-install` writes a macOS LaunchAgent. `dashboard.json` registers the app
 with rack, the local dashboard. **Add from this Mac** looks for checkouts under rack's roots
-(`~/Self` when there are none), or in any folder an admin types, and Telegram goes through a separate notifier app (`NOTIFIER_URL`;
+(the folder this checkout sits in when there are none), or in any folder an admin types, and Telegram goes through a separate notifier app (`NOTIFIER_URL`;
 empty turns it off). None of this is needed elsewhere. The server needs Node 22.18+, git, an
 agent CLI, and a Postgres it can reach at `DATABASE_URL` (it applies its migrations at boot); `gh`
 is needed only for pull-request delivery. So on any machine: fill in `.env`, then
@@ -263,3 +263,7 @@ they take work in, report, cost and perform), [the operating model](docs/researc
 a terminal), and [the integrations](docs/research/integrations.md) (Slack, Jira, GitHub, Linear,
 webhooks, prompt injection). [The research index](docs/research/README.md) says what each one
 changed in the design.
+
+## License
+
+[MIT](LICENSE).

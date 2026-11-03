@@ -1,4 +1,4 @@
-// The notifier (~/Self/notifier) delivers to Telegram and hands back what is tapped there.
+// The notifier (a separate app, at NOTIFIER_URL) delivers to Telegram and hands back what is tapped there.
 // Off when NOTIFIER_URL is empty. A slow or stopped notifier never slows the factory down.
 import { randomBytes } from "node:crypto";
 import { kvGet, kvSet } from "../db.ts";

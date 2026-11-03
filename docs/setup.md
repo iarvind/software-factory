@@ -15,7 +15,7 @@ in from **People**, unless their address is in `ALLOWED_EMAILS` or their domain 
 
 ## A public hostname (optional)
 
-Like every app here: in `~/Self/dashboard/platform`, add `FACTORY_HOST=factory.<domain>` to `.env`,
+Like every app here: in the platform directory (`PLATFORM_DIR`), add `FACTORY_HOST=factory.<domain>` to `.env`,
 `FACTORY_HOST: ${FACTORY_HOST:-factory.localhost}` under `caddy.environment` in `compose.yml`, a
 site block in `Caddyfile`:
 
@@ -38,7 +38,7 @@ notifier hook refuse them.
 ## Your first project
 
 For an app on this Mac: Projects → **Add from this Mac**. It lists the git checkouts one level
-under rack's roots (`roots` in `~/Self/dashboard/services.json`, `~/Self` when there is none) that
+under rack's roots (`roots` in rack's `services.json`, or the folder this checkout sits in when there are none) that
 are not projects yet — worktrees are left out — with the commands filled in from what the
 repository has: `package.json` scripts (`npm test`, `npm run typecheck` or `npm run build`,
 `npm ci`), Makefile targets (`make test`, `make check`, `make deploy`), `go.mod`, `pytest`, the
@@ -46,7 +46,7 @@ health check from its `dashboard.json`, and the first paragraph of its README as
 Look them over, change what is wrong, add. It is created with `delivery` `local` and the default
 gates.
 
-By hand it is Projects → New: `local_path` `~/Self/<app>`, `delivery` `local`, `test_command` and
+By hand it is Projects → New: `local_path` `~/code/<app>`, `delivery` `local`, `test_command` and
 `build_command` what its README says (`npm test`, `npm run typecheck`), `deploy_command`
 `make deploy`, `health_url` `http://127.0.0.1:<port>/api/healthz`. Keep the gates `manual` until
 the factory has earned `auto_low_risk`. *Check* tells you whether the checkout is clean and on its

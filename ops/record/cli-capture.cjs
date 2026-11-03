@@ -20,7 +20,7 @@ const TITLE = process.env.CLI_TITLE || "Include the requested path in 404 respon
 const FILE = path.join(L.MEDIA, "cli-session.json");
 const CLI = path.join(L.ROOT, "cli", "factory.ts");
 
-const clean = (s) => s.replace(/\/Users\/[^/\s"']+\/Self\/software-factory\//g, "").replace(/\/Users\/[^/\s"']+/g, "~").replace(/ft_[A-Za-z0-9_-]{8,}/g, "ft_…");
+const clean = (s) => L.clean(s).replace(/ft_[A-Za-z0-9_-]{8,}/g, "ft_…");
 async function api(method, p, body) {
   const r = await fetch(URL_ + p, { method, headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
   const t = await r.text();

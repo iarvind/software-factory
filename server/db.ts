@@ -16,7 +16,7 @@ types.setTypeParser(20, (v) => (v == null ? null : Number(v)));
 
 const url = process.env.DATABASE_URL;
 if (!url) {
-  console.error("DATABASE_URL is not set — copy .env.example to .env (~/Self/dashboard/platform/db.sh url factory)");
+  console.error("DATABASE_URL is not set — copy .env.example to .env (the platform's db.sh url factory)");
   process.exit(1);
 }
 

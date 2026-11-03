@@ -4,8 +4,7 @@
 // token. Reports page and console errors. node ops/clickthrough.cjs (BASE, EMAIL as in shoot.cjs)
 const fs = require("node:fs");
 const path = require("node:path");
-const core = process.env.PLAYWRIGHT_CORE || path.join(process.env.HOME, "Self/musicgen-ai/node_modules/playwright-core");
-const { chromium } = require(core);
+const { chromium } = require(process.env.PLAYWRIGHT_CORE || "playwright-core");
 const base = process.env.BASE || "http://127.0.0.1:8282";
 const envFile = path.join(__dirname, "..", ".env");
 const email = process.env.EMAIL || (fs.existsSync(envFile) ? /^ADMIN_EMAILS=([^\s,]+)/m.exec(fs.readFileSync(envFile, "utf8"))?.[1] : "") || "demo@factory.test";

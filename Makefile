@@ -1,6 +1,7 @@
 .PHONY: deploy dev db typecheck test check launchd-install launchd-uninstall launchd-status logs install-cli
 
-PLATFORM_DIR ?= $(HOME)/Self/dashboard/platform
+# The shared platform (postgres, db.sh) sits next to this checkout unless PLATFORM_DIR says otherwise.
+PLATFORM_DIR ?= $(abspath $(CURDIR)/../dashboard/platform)
 
 deploy: ## build and (re)start the server on :8282 — the one command the dashboard runs
 	./ops/deploy.sh
